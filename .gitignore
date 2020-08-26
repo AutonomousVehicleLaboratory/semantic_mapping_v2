@@ -1,0 +1,47 @@
+# Pycharm editor settings
+.idea
+# Visual Studio
+.vscode
+# MacOS
+.DS_Store
+
+# temp
+tempimage.jpg
+
+# Ignore avl.yaml
+config/avl.yaml
+
+# Ignore data
+external_data/
+outputs
+
+# Customized folder
+network_output_example
+high_res_images
+
+# =================================================
+# Python Ignore
+# =================================================
+# compilation and distribution
+__pycache__
+_ext
+*.pyc
+*.so
+build/
+dist/
+*.egg-info/
+
+# pytorch/python/numpy formats
+*.pth
+*.pkl
+*.npy
+
+# ipython/jupyter notebooks
+*.ipynb
+**/.ipynb_checkpoints/
+
+# Editor temporaries
+*.swn
+*.swo
+*.swp
+*~

@@ -1,0 +1,9 @@
+future
+matplotlib>=2.0.0
+opencv-python
+scikit-image>=0.11.2
+scipy==0.17.0
+torch
+torchvision
+tensorboard
+yacs

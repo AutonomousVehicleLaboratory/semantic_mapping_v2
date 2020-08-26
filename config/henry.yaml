@@ -1,0 +1,39 @@
+TASK_NAME: "alignment"
+RNG_SEED: -1
+TEST_END_TIME: 1581541450
+# TEST_END_TIME: 1581541270
+GROUND_TRUTH_DIR: "/home/henry/Documents/projects/pylidarmot/src/vision_semantic_segmentation/test/ground_truth/"
+MAPPING:
+  BOUNDARY: [[0, 600], [0, 1400]]
+  # BOUNDARY: [[0, 300], [0, 1000]]
+  RESOLUTION: 0.2
+  PCD:
+    USE_INTENSITY: False
+    RANGE_MAX: 15.0
+  CONFUSION_MTX:
+    # LOAD_PATH: ""
+    LOAD_PATH: "/home/henry/Documents/projects/pylidarmot/src/vision_semantic_segmentation/external_data/confusion_matrix/run_trad_cnn/cfn_mtx.npy"
+  # INPUT_DIR: "/home/henry/Documents/projects/pylidarmot/src/vision_semantic_segmentation/external_data/replay_data/"
+  # INPUT_DIR: "/media/henry/Work/UCSD/0_Research/avl/testing/data_file/"
+  INPUT_DIR: "/media/henry/a9424222-cf63-4d81-9a69-b7ba7d8ca940/home/henry/Documents/avl/data_file/"
+  DEPTH_METHOD: "points_map"
+  ROUND_CLOSE: True
+VISION_SEM_SEG:
+  IMAGE_SCALE: 0.5
+  SEM_SEG_NETWORK:
+    TRAIN_DATASET: "Mapillary"
+    # You may need to customize dataset configuration
+    DATASET_CONFIG: "/home/henry/Documents/projects/pylidarmot/src/vision_semantic_segmentation/config/config_19.json"
+    MODEL:
+      TYPE: "DeepLabv3+"
+      BACKBONE: "resnext50_32x4d"
+      SYNC_BN: False
+      OUTPUT_STRIDE: 8
+      # You may want to use your own weight
+      WEIGHT: "/media/henry/Files/datasets/vision_semantic_model/model_best_19_class.pth"
+    DATASET:
+      NAME: "AVL"
+      IN_CHANNELS: 3
+      # Make sure the num of class is equal to the config file
+      NUM_CLASSES: 19
+      ROOT_DIR: "ignored"

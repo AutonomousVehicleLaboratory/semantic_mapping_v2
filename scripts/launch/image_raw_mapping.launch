@@ -1,0 +1,13 @@
+<launch>
+
+    <node pkg="vision_semantic_segmentation" type="mapping.py" name="semantic_mapping" output="screen" />
+    <node pkg="map_reduction" type="map_reduction" name="map_reduction" output="screen" />
+    <node pkg="vision_semantic_segmentation" type="vision_semantic_segmentation_node.py" name="vision_semantic_segmentation_node" output="screen" />
+    
+    <arg name="camera_left_id" default="camera1"/>
+    <arg name="camera_right_id" default="camera6"/>
+    <!-- <node name="republisher_$(arg camera_left_id)" type="republish" pkg="image_transport" output="screen" args="compressed in:=/avt_cameras/$(arg camera_left_id)/image_color raw out:=$(arg camera_left_id)/image_raw" /> -->
+
+    <node name="republisher_$(arg camera_right_id)" type="republish" pkg="image_transport" output="screen" args="compressed in:=/avt_cameras/$(arg camera_right_id)/image_color raw out:=$(arg camera_right_id)/image_raw" />
+
+</launch>
