@@ -4,22 +4,28 @@ Author: Henry Zhang
 Date:February 03, 2020
 """
 
-# module
 import numpy as np
-from mpl_toolkits.mplot3d import Axes3D
+
 from matplotlib import pyplot as plt
-from plane_3d import Plane3D
-from bounding_box import BoundingBox
 
 from src.utils.utils import homogenize, dehomogenize, parameterize_rotation
 
 
-# parameters
-
-
-# classes
 class Camera:
+    """ A pespective camera model """
+
     def __init__(self, K, R, t, imSize=None, id=0, dist=None):
+        """
+
+        Args:
+            K (np.ndarray): Camera intrinsic
+            R (np.ndarray): Camera rotation
+            t (np.ndarray): Camera translation
+            imSize (tuple): The pixel size of the image
+            id (int): Camera id
+            dist:
+        """
+
         self.id = id
         self.K = K
         self.R = R
@@ -92,14 +98,9 @@ class Camera:
 
 
 # functions
-def test_pixel_to_ray(cam):
-    x = np.array([[1, 500, 1000],
-                  [1, 200, 400]])
-    for i in range(x.shape[1]):
-        d, C = cam.pixel_to_ray(x[0, i], x[1, i])
 
 
-def camera_setup_1():
+def _camera_setup_1():
     K = np.array([[1826.998004, 0.000000, 1174.548672],
                   [0.000000, 1802.603136, 776.028597],
                   [0.000000, 0.000000, 1.000000]])
@@ -117,7 +118,7 @@ def camera_setup_1():
     return cam
 
 
-def camera_setup_6():
+def _camera_setup_6():
     K = np.array([[1790.634474, 0., 973.099292],
                   [0., 1785.950534, 803.294457],
                   [0., 0., 1.]])
@@ -135,8 +136,34 @@ def camera_setup_6():
     return cam
 
 
+def build_camera_model(name):
+    """
+    Build the camera model given name 
+    Args:
+        name (str): The name of the camera
+
+    Returns:
+
+    """
+    function_map = {
+        "camera1": _camera_setup_1,
+        "camera6": _camera_setup_6,
+    }
+    if name not in function_map:
+        raise NotImplementedError
+    else:
+        return function_map[name]
+
+
+def test_pixel_to_ray(cam):
+    x = np.array([[1, 500, 1000],
+                  [1, 200, 400]])
+    for i in range(x.shape[1]):
+        d, C = cam.pixel_to_ray(x[0, i], x[1, i])
+
+
 def test_camera_setup():
-    cam = camera_setup_6()
+    cam = _camera_setup_6()
     U, D, VT = np.linalg.svd(cam.P)
     C_homo = VT.T[:, -1::]
     C = C_homo[0:3] / C_homo[3, 0]
@@ -151,7 +178,7 @@ def test_pixel_to_ray_plot():
     K = np.array([[7.070493000000e+02, 0.000000000000e+00, 6.040814000000e+02],
                   [0.000000000000e+00, 7.070493000000e+02, 1.805066000000e+02],
                   [0.000000000000e+00, 0.000000000000e+00, 1.000000000000e+00]])
-    R = np.array([[0., -1, 0],
+    R = np.array([[0, -1, 0],
                   [0, 0, -1],
                   [1, 0, 0]])
     C_world = np.array([[0, 0.5, 0]]).T

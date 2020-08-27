@@ -1,0 +1,13 @@
+<!-- A test launch for semantic mapping  -->
+<launch>
+
+    <!-- The arguments that passed into this launch file -->
+    <arg name="mapping_args" default=""/>
+
+    <node pkg="semantic_mapping_v2" type="mapping.py"
+          name="semantic_mapping" output="screen" args="$(arg mapping_args)"/>
+    <node pkg="semantic_mapping_v2" type="semantic_segmentation_node.py"
+          name="semantic_segmentation_node" output="screen" args="$(arg mapping_args)"/>
+    <node pkg="map_reduction" type="map_reduction" name="map_reduction" output="screen"/>
+    
+</launch>

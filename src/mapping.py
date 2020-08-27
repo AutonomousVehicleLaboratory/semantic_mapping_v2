@@ -24,7 +24,7 @@ from sensor_msgs import point_cloud2 as pc2
 from tf import TransformListener, TransformerROS
 from tf.transformations import euler_matrix
 
-from src.camera import camera_setup_1, camera_setup_6
+from src.camera import _camera_setup_1, _camera_setup_6
 from src.config.base_cfg import get_cfg_defaults
 from src.data.confusion_matrix import ConfusionMatrix
 from src.homography import generate_homography
@@ -91,8 +91,8 @@ class SemanticMapping:
         self.pose = None
         self.pose_queue = []
         self.pose_time = None
-        self.cam1 = camera_setup_1()
-        self.cam6 = camera_setup_6()
+        self.cam1 = _camera_setup_1()
+        self.cam6 = _camera_setup_6()
         rospy.logwarn("currently only for front view")
 
         self.pcd = None
