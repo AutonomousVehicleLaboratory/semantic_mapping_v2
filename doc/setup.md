@@ -127,7 +127,7 @@ You can open RViz to view the output image. We provide a default configuration f
 Our implementation here depends on the `deeplab` semantic segmentation package. We need to install it first. 
 
 ```sh
-cd ~/codebase/ros_workspace
+cd ~/codebase/ros_workspace/src
 
 git clone https://github.com/AutonomousVehicleLaboratory/deeplab.git
 

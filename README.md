@@ -46,7 +46,9 @@ You can install rospy via pip by (Reference is [here](https://answers.ros.org/qu
 pip install --extra-index-url https://rospypi.github.io/simple/ rospy
 ```
 
+### Create ROS node
 
+In order for your Python script to be detectable by the `catkin_make`, you have to make it `executable`. Actually, `catkin_make` will collect all the executable files in your source code and make them visible in `rosrun/roslaunch`. 
 
 
 

@@ -152,7 +152,7 @@ def build_camera_model(name):
     if name not in function_map:
         raise NotImplementedError
     else:
-        return function_map[name]
+        return function_map[name]()
 
 
 def test_pixel_to_ray(cam):
