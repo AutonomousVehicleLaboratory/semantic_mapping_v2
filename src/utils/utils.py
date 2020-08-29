@@ -11,7 +11,7 @@ import io
 import pstats
 
 from matplotlib import pyplot as plt
-from plane_3d import Plane3D
+from src.plane_3d import Plane3D
 
 
 def profile(function):
@@ -268,6 +268,7 @@ def test_crop():
     plt.imshow(clipped_img)
     plt.show()
     cv2.imwrite("/home/henry/Pictures/global_map_real_time_scan_clipped.png", clipped_img)
+
 
 # main
 def main():

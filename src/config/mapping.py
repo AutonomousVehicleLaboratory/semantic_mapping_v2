@@ -25,9 +25,44 @@ def get_cfg_defaults():
 # Set the random seed of the network for reproducibility
 _C.RNG_SEED = -1
 
+# We will create a sub-folder with this name in the output directory
+# Unless otherwise specified, the output of our algorithm will be stored in [project root directory]/outputs/[TASK_NAME]
+_C.TASK_NAME = "cfn_mtx_with_intensity"
+_C.OUTPUT_DIR = ""  # Note that this directory does not need to contain the [TASK_NAME], we will add this for you.
+
 # --------------------------------------------------------------------------- #
 # Mapping Node
 # --------------------------------------------------------------------------- #
+_C.MAPPING = CN()
+
+# The source of the point cloud. It can be
+# "dense_pcd" - The dense point cloud
+# "raw_pcd" - The real time point cloud coming from the LiDAR sensor
+_C.MAPPING.POINT_CLOUD_SOURCE = "dense_pcd"
+
+# # The resolution of the occupancy grid in meters
+# _C.MAPPING.RESOLUTION = 0.1
+# # The boundary of the occupancy grid, in meters. The format of the boundary is [[xmin, xmax], [ymin, ymax]]
+# _C.MAPPING.BOUNDARY = [[100, 300], [800, 1000]]
+# # This variable defines the way how we estimate the depth from the image. If use "points_map", then we are using the
+# # offline point cloud map. If use the points_raw", then we are using the the online point cloud map, i.e. the output
+# # from the LiDAR per frame.
+# _C.MAPPING.DEPTH_METHOD = 'points_map'
+#
+# # Point cloud setting
+# _C.MAPPING.PCD = CN()
+# # If True, use the point cloud intensity data to augment our semantic BEV estimation
+# _C.MAPPING.PCD.USE_INTENSITY = True
+# _C.MAPPING.PCD.RANGE_MAX = 100.0
+#
+# _C.MAPPING.CONFUSION_MTX = CN()
+# # The load path of the confusion matrix
+# _C.MAPPING.CONFUSION_MTX.LOAD_PATH = ""
+# # The store and load path of deterministic input to the mapping process
+# _C.MAPPING.INPUT_DIR = ""
+# # If round to close or round down
+# _C.MAPPING.ROUND_CLOSE = True
+
 
 # --------------------------------------------------------------------------- #
 # Semantic Segmentation Node

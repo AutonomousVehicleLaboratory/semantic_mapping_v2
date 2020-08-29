@@ -11,25 +11,36 @@ from .file_io import makedirs
 class MyLogger:
     """ My customized logger """
 
-    def __init__(self, name, save_dir='', version=None, use_timestamp=True):
+    def __init__(self,
+                 name,
+                 save_dir='',
+                 version=None,
+                 use_timestamp=True,
+                 log_level=logging.DEBUG,
+                 log_format='%(asctime)s %(name)s %(levelname)s: %(message)s',
+                 ):
         """
         Set up the logger
 
         Args:
-            name: The name of the logger
-            save_dir: If provided, save the logger result to save_dir
-            use_timestamp: If True, saved log file name will include the timestamp
+            name (str): The name of the logger
+            save_dir (str) : If provided, save the logger result to save_dir. It will create the folder if it is not
+                exist.
+            version (str): The version of the log. If not provide, it will be 1 plus the maximum version in save_dir.
+            use_timestamp (bool): If True, saved log file name will include the timestamp
+            log_level: The logging level
+            log_format (str): The log output format
         """
         # Create logger
         logger = logging.getLogger(name)
-        logger.setLevel(logging.DEBUG)
+        logger.setLevel(log_level)
 
         # Create console handler and set level to debug
         ch = logging.StreamHandler(stream=sys.stdout)
-        ch.setLevel(logging.DEBUG)
+        ch.setLevel(log_level)
 
         # Create console handler and set level to debug, add formatter to ch
-        formatter = logging.Formatter('%(asctime)s %(name)s %(levelname)s: %(message)s')
+        formatter = logging.Formatter(log_format)
         ch.setFormatter(formatter)
         logger.addHandler(ch)
 
@@ -57,18 +68,6 @@ class MyLogger:
         self.logger = logger
         self.save_dir = save_dir
 
-    def log(self, msg, level="info"):
-        if level == "info":
-            self.logger.info(msg)
-        elif level == "debug":
-            self.logger.debug(msg)
-        elif level == "warning":
-            self.logger.warning(msg)
-        elif level == "critical":
-            self.logger.critical(msg)
-        else:
-            raise NotImplementedError
-
     def _get_next_version(self, save_dir):
         """ Get the next version from the save_dir """
         root_dir = os.path.join(save_dir)
@@ -89,3 +88,37 @@ class MyLogger:
             return 0
 
         return max(existing_versions) + 1
+
+    def debug(self, msg):
+        return self.logger.debug(msg)
+
+    def info(self, msg):
+        return self.logger.info(msg)
+
+    def warning(self, msg):
+        return self.logger.warning(msg)
+
+    def error(self, msg):
+        return self.logger.error(msg)
+
+    def critical(self, msg):
+        return self.logger.critical(msg)
+
+    def exception(self, msg):
+        return self.logger.exception(msg)
+
+    def log(self, msg, level="info"):
+        if level == "info":
+            self.info(msg)
+        elif level == "debug":
+            self.debug(msg)
+        elif level == "warning":
+            self.warning(msg)
+        elif level == "error":
+            self.error(msg)
+        elif level == "critical":
+            self.critical(msg)
+        elif level == "exception":
+            self.exception(msg)
+        else:
+            raise NotImplementedError

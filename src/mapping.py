@@ -8,24 +8,28 @@ Date:February 24, 2020
 import argparse
 import cv2
 import numpy as np
-import os
 import os.path as osp
 import rospy
 import sys
-import hickle
 
 # Add src directory into the path
 sys.path.insert(0, osp.abspath(osp.join(osp.dirname(__file__), "../")))
 
-from cv_bridge import CvBridge, CvBridgeError
-from geometry_msgs.msg import PoseStamped, Pose
-from sensor_msgs.msg import Image, PointCloud2
-from sensor_msgs import point_cloud2 as pc2
-from tf import TransformListener, TransformerROS
-from tf.transformations import euler_matrix
+# Package that cannot be installed by pip (or is outdated because of the specific ROS version we use)
+try:
+    from cv_bridge import CvBridge, CvBridgeError
+    from geometry_msgs.msg import PoseStamped, Pose
+    from sensor_msgs import point_cloud2
+    from sensor_msgs.msg import Image, PointCloud2
+    from tf import TransformListener, TransformerROS
+    from tf.transformations import euler_matrix
+except:
+    pass
 
-from src.camera import _camera_setup_1, _camera_setup_6
-from src.config.base_cfg import get_cfg_defaults
+from collections import deque
+
+from src.camera import build_camera_model
+from src.config.mapping import get_cfg_defaults
 from src.data.confusion_matrix import ConfusionMatrix
 from src.homography import generate_homography
 from src.renderer import render_bev_map, render_bev_map_with_thresholds, apply_filter
@@ -52,47 +56,57 @@ class SemanticMapping:
         # Sanity check
         assert len(cfg.LABELS) == len(cfg.LABELS_NAMES) == len(cfg.LABEL_COLORS)
 
-        # Set up ros subscribers
-        self.sub_pose = rospy.Subscriber("/current_pose", PoseStamped, self.pose_callback)
-        self.image_sub_cam1 = rospy.Subscriber("/camera1/semantic", Image, self.image_callback)
-        self.image_sub_cam6 = rospy.Subscriber("/camera6/semantic", Image, self.image_callback)
+        # Set up ROS subscribers
+        self._subscribers = {}
+        self._subscribers["pose"] = rospy.Subscriber("/current_pose", PoseStamped, self._pose_callback)
 
-        self.depth_method = cfg.MAPPING.DEPTH_METHOD
-        if self.depth_method == 'points_map':
-            self.sub_pcd = rospy.Subscriber("/reduced_map", PointCloud2, self.pcd_callback)
-        elif self.depth_method == 'points_raw':
-            self.sub_pcd = rospy.Subscriber("/points_raw", PointCloud2, self.pcd_callback)
+        self._target_cameras = cfg.SEM_SEG.TARGET_CAMERAS
+        for cam in self._target_cameras:
+            self._subscribers[cam] = rospy.Subscriber("/{}/semantic".format(cam), Image, self._image_callback)
+
+        point_cloud_source = cfg.MAPPING.POINT_CLOUD_SOURCE
+        if point_cloud_source == "dense_pcd":
+            self._subscribers["pcd"] = rospy.Subscriber("/reduced_map", PointCloud2, self._pcd_callback)
+        elif point_cloud_source == "raw_pcd":
+            self._subscribers["pcd"] = rospy.Subscriber("/points_raw", PointCloud2, self._pcd_callback)
         else:
-            rospy.logwarn("Depth estimation method set to others, use planar assumption!")
+            raise NotImplementedError
 
-        # Set up ros publishers
-        self.pub_semantic_local_map = rospy.Publisher("/semantic_local_map", Image, queue_size=5)
-        self.pub_pcd = rospy.Publisher("/semantic_point_cloud", PointCloud2, queue_size=5)
+        # Set up ROS publishers
+        self._publishers = {}
+        self._publishers["semantic_local_map"] = rospy.Publisher("/semantic_local_map", Image, queue_size=5)
+        self._publishers["pcd"] = rospy.Publisher("/semantic_point_cloud", PointCloud2, queue_size=5)
 
-        self.tf_listener = TransformListener()
-        self.tf_ros = TransformerROS()
-        self.bridge = CvBridge()
+        self._tf_listener = TransformListener()
+        self._tf_ros = TransformerROS()
+        self._bridge = CvBridge()
 
         # Set up the output directory
         output_dir = cfg.OUTPUT_DIR  # type:str
-        if '@' in output_dir:
-            # Replace @ with the project root directory
-            output_dir = output_dir.replace('@', osp.join(osp.dirname(__file__), "../"))
-            # Create a sub-folder in the output directory with the name of cfg.TASK_NAME
-            output_dir = osp.join(output_dir, cfg.TASK_NAME)
-            output_dir = osp.abspath(output_dir)
+        # If output directory is empty, we set it to the [project root directory]/outputs/[TASK_NAME]
+        if not output_dir:
+            output_dir = osp.abspath(osp.join(osp.dirname(__file__), "../outputs"))
+        output_dir = osp.join(output_dir, cfg.TASK_NAME)
 
         # Set up the logger
-        self.logger = MyLogger("mapping", save_dir=output_dir, use_timestamp=False)
+        self.logger = MyLogger("mapping", save_dir=output_dir, use_timestamp=True)
         # Because logger will create create a sub folder "version_xxx", we need to update the output_dir
         output_dir = self.logger.save_dir
         self.output_dir = output_dir
 
+        # Load camera model
+        self.camera_models = {}
+        for cam in self._target_cameras:
+            self.camera_models[cam] = build_camera_model(cam)
+
+        self._pose_queue = deque()
+        self._pcd_queue = deque()
+
+        self._load_constant_matrics()
+
         self.pose = None
         self.pose_queue = []
         self.pose_time = None
-        self.cam1 = _camera_setup_1()
-        self.cam6 = _camera_setup_6()
         rospy.logwarn("currently only for front view")
 
         self.pcd = None
@@ -139,11 +153,12 @@ class SemanticMapping:
         self.unique_input_dict = {}
         self.input_dir = cfg.MAPPING.INPUT_DIR
 
-    def preprocessing(self):
-        """ Setup constant matrices """
-        self.T_velodyne_to_basklink = self.set_velodyne_to_baselink()
-        self.T_cam1_to_base = np.matmul(self.T_velodyne_to_basklink, self.cam1.T)
-        self.T_cam6_to_base = np.matmul(self.T_velodyne_to_basklink, self.cam6.T)
+    def _load_constant_matrics(self):
+        """ Load the constant matrices into class attributes """
+        self.T_velodyne_to_basklink = self._set_velodyne_to_baselink()
+        self.T_camera_to_base = {}
+        for cam in self._target_cameras:
+            self.T_camera_to_base = np.matmul(self.T_velodyne_to_basklink, self.camera_models[cam].T)
 
         self.discretize_matrix_inv = np.array([
             [self.resolution, 0, self.map_boundary[0][0]],
@@ -152,35 +167,108 @@ class SemanticMapping:
         ]).astype(np.float)
         self.discretize_matrix = np.linalg.inv(self.discretize_matrix_inv)
 
-        self.anchor_points = np.array([
-            [self.map_width, self.map_width / 3, self.map_width, self.map_width / 3],
-            [self.map_height / 4, self.map_height / 4, self.map_height * 3 / 4, self.map_height * 3 / 4],
-        ])
+        # self.anchor_points = np.array([
+        #     [self.map_width, self.map_width / 3, self.map_width, self.map_width / 3],
+        #     [self.map_height / 4, self.map_height / 4, self.map_height * 3 / 4, self.map_height * 3 / 4],
+        # ])
+        #
+        # self.anchor_points_2 = np.array([
+        #     [self.map_width, self.map_width / 2, self.map_width / 2, self.map_width],
+        #     [self.map_height / 4, self.map_height / 4, self.map_height * 3 / 4, self.map_height * 3 / 4],
+        # ])
 
-        self.anchor_points_2 = np.array([
-            [self.map_width, self.map_width / 2, self.map_width / 2, self.map_width],
-            [self.map_height / 4, self.map_height / 4, self.map_height * 3 / 4, self.map_height * 3 / 4],
-        ])
-
-    def set_velodyne_to_baselink(self):
+    def _set_velodyne_to_baselink(self):
         rospy.logwarn("velodyne to baselink from TF is tunned, current version fits best.")
         T = euler_matrix(0., 0.140, 0.)
         t = np.array([[2.64, 0, 1.98]]).T
         T[0:3, -1::] = t
         return T
 
-    def pcd_callback(self, msg):
-        """ Callback function for the point cloud dataset """
-        rospy.logwarn("pcd data frame_id %s", msg.header.frame_id)
-        rospy.logdebug("pcd data received")
-        rospy.logdebug("pcd size: %d, %d", msg.height, msg.width)
-        rospy.logwarn("pcd queue size: %d", len(self.pcd_queue))
+    def _pcd_callback(self, msg):
+        """
+        The callback function for point cloud
+
+        Args:
+            msg (PointCloud2): refer to this http://docs.ros.org/melodic/api/sensor_msgs/html/msg/PointCloud2.html
+
+        """
+        # if False:
+        #     self.logger.warning("pcd data frame_id %s", msg.header.frame_id)
+        #     self.logger.debug("pcd data received")
+        #     self.logger.debug("pcd size: %d, %d", msg.height, msg.width)
+        #     self.logger.warning("pcd queue size: %d", len(self.pcd_queue))
         pcd = np.empty((4, msg.width))
-        for i, el in enumerate(pc2.read_points(msg, field_names=("x", "y", "z", "intensity"), skip_nans=True)):
+        for i, el in enumerate(point_cloud2.read_points(msg, field_names=("x", "y", "z", "intensity"), skip_nans=True)):
             pcd[:, i] = el
-        self.pcd_queue.append(pcd)
-        self.pcd_header_queue.append(msg.header)
+        self.pcd_queue.append((msg.header, pcd))
         self.pcd_frame_id = msg.header.frame_id
+
+    def _pose_callback(self, msg):
+        """
+
+        Args:
+            msg (PoseStamped): http://docs.ros.org/melodic/api/geometry_msgs/html/msg/PoseStamped.html
+
+        Returns:
+
+        """
+        self.pose_queue.append(msg)
+        if msg.header.stamp.secs >= self.test_cut_time:
+            self.save_map_to_file = True
+        rospy.logdebug("Pose queue length: %d", len(self.pose_queue))
+
+    def _find_closest_data(self, queue, target_stamp):
+        """
+        Find the closest data B in queue w.r.t the target_stamp. Note that all the data that happens earlier than B,
+        including B itself will be removed from the queue. By doing so we can avoid re-association of previous data.
+        We assume that the time in queue is monotonically increase.
+
+        We first want to find the smallest stamp that is larger than the timestamp, then compare it with the
+        largest stamp that is smaller than the timestamp. and then pick the smallest one as the result. If such
+        condition does not exist, i.e. all the stamps are smaller than the time stamp, we just pick the latest one.
+
+        Args:
+            queue (deque): Each element in queue should be a tuple of (header, data) where we don't care the data
+                format. The header should have a header.stamp which contains its corresponding time stamp.
+            target_stamp (float): The target time stamp
+
+        Returns:
+            if the queue is empty, we return None.
+
+        """
+        if len(queue) == 0:
+            return None
+
+        # Identify the closest time stamp that is smaller than target_stamp
+        prev_elem = None
+        selected_elem = None
+        while len(queue) > 0:
+            curr_elem = queue.popleft()
+            curr_stamp = curr_elem[0].stamp
+            if curr_stamp > target_stamp:
+                if prev_elem is None:
+                    selected_elem = curr_elem
+                    break
+                else:
+                    prev_stamp = prev_elem[0].stamp
+                    diff_1 = np.abs(curr_stamp - target_stamp)
+                    diff_2 = np.abs(prev_stamp - target_stamp)
+                    if diff_1 < diff_2:
+                        # Pick current element
+                        selected_elem = curr_elem
+                    else:
+                        # Pick previous elem and put current element back
+                        selected_elem = prev_elem
+                        queue.appendleft(curr_elem)
+                    break
+
+            prev_elem = curr_elem
+
+        # If no element that are greater than target stamp, return the lastest one
+        if selected_elem is None:
+            return prev_elem
+        else:
+            return selected_elem
 
     def update_pcd(self, target_stamp):
         """
@@ -265,7 +353,7 @@ class SemanticMapping:
         """
         self.logger.log("Mapping image at: {}.{:.9f}s".format(msg.header.stamp.secs, msg.header.stamp.nsecs))
         try:
-            image_in = self.bridge.imgmsg_to_cv2(msg, desired_encoding="passthrough")
+            image_in = self._bridge.imgmsg_to_cv2(msg, desired_encoding="passthrough")
         except CvBridgeError as e:
             print(e)
             return
@@ -324,7 +412,7 @@ class SemanticMapping:
             # with open(os.path.join(self.input_dir, "input_list.hkl"), 'wb') as fp:
             #     print("writing input_list ...")
             #     hickle.dump(self.input_list, fp, mode='w')    
-                        
+
             output_dir = self.output_dir
             makedirs(output_dir, exist_ok=True)
             # np.save(osp.join(output_dir, "map.npy"), self.map)
@@ -346,7 +434,7 @@ class SemanticMapping:
 
             # Publish the image
             try:
-                image_pub = self.bridge.cv2_to_imgmsg(color_map, encoding="passthrough")
+                image_pub = self._bridge.cv2_to_imgmsg(color_map, encoding="passthrough")
                 self.pub_semantic_local_map.publish(image_pub)
             except CvBridgeError as e:
                 print(e)
@@ -401,7 +489,8 @@ class SemanticMapping:
             Updated map
         """
         normal = np.array([[0.0, 0.0, 1.0]]).T  # The normal of the z axis
-        pcd_origin_offset = np.array([[1369.0496826171875], [562.84814453125], [0.0]]) # pcd origin with respect to map origin
+        pcd_origin_offset = np.array(
+            [[1369.0496826171875], [562.84814453125], [0.0]])  # pcd origin with respect to map origin
         pcd_local = pcd[0:3] + pcd_origin_offset
         pcd_on_map = pcd_local - np.matmul(normal, np.matmul(normal.T, pcd_local))
         # Discretize point cloud into grid, Note that here we are basically doing the nearest neighbor search
@@ -454,16 +543,17 @@ class SemanticMapping:
         T_local_to_base, _, _, _ = get_transformation(frame_from='/global_map', time_from=rospy.Time(0),
                                                       frame_to='/base_link', time_to=self.pose_time,
                                                       static_frame='world',
-                                                      tf_listener=self.tf_listener, tf_ros=self.tf_ros)
+                                                      tf_listener=self._tf_listener, tf_ros=self._tf_ros)
         T_base_to_velodyne = np.linalg.inv(self.T_velodyne_to_basklink)
         T_local_to_velodyne = np.matmul(T_base_to_velodyne, T_local_to_base)
 
         points_base_link = np.array([[30, 10, 10, 30],
-                                    [0, 2, 5, 15],
-                                    [0, 0, 0, 0]], dtype=np.float)
+                                     [0, 2, 5, 15],
+                                     [0, 0, 0, 0]], dtype=np.float)
         points_global = np.matmul(np.linalg.inv(T_local_to_base), homogenize(points_base_link))
-        anchor_points_global = ((points_global[0:2, :] - np.array([[self.map_boundary[0][0]], [self.map_boundary[1][0]]]))
-                     / self.resolution).astype(np.int32)
+        anchor_points_global = (
+                (points_global[0:2, :] - np.array([[self.map_boundary[0][0]], [self.map_boundary[1][0]]]))
+                / self.resolution).astype(np.int32)
 
         # compute new points
         points_velodyne = np.matmul(T_local_to_velodyne, points_global)
@@ -579,3 +669,15 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+    # class QueueData:
+    #     """ A generic data format for ROS data """
+    #
+    #     def __init__(self, header, **kwargs):
+    #         self.header = header
+    #         self._data = {**kwargs}
+    #
+    #     def __getitem__(self, key):
+    #         if key not in self._data:
+    #             raise KeyError
+    #         return self._data[key]

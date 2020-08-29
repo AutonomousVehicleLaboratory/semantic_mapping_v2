@@ -108,7 +108,7 @@ class SemanticSegmentationNode:
         self.semantic_color_reference = mapillary_visualization.get_labels(network_cfg.DATASET.CONFIG_PATH)
         self.input_image_scale = cfg.SEM_SEG.IMAGE_SCALE
 
-        self.bridge = CvBridge()
+        self._bridge = CvBridge()
 
     def _image_callback(self, msg, img_type="compressed"):
         camera_name = msg.header.frame_id
@@ -123,7 +123,7 @@ class SemanticSegmentationNode:
             image_in = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
         elif img_type == "image_color":
             try:
-                image_in = self.bridge.imgmsg_to_cv2(msg, desired_encoding="passthrough")  # output is BGR
+                image_in = self._bridge.imgmsg_to_cv2(msg, desired_encoding="passthrough")  # output is BGR
             except CvBridgeError as e:
                 print(e)
                 return
@@ -158,7 +158,7 @@ class SemanticSegmentationNode:
 
         # Publish the semantic image and its colored version
         try:
-            image_for_publish = self.bridge.cv2_to_imgmsg(image_out_colored, encoding="passthrough")
+            image_for_publish = self._bridge.cv2_to_imgmsg(image_out_colored, encoding="passthrough")
             image_for_publish.header.stamp = msg.header.stamp
             image_for_publish.header.frame_id = msg.header.frame_id
             self._img_publisher[camera_name].publish(image_for_publish)
