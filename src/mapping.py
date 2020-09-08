@@ -64,10 +64,13 @@ class SemanticMapping:
         for cam in self._target_cameras:
             self._subscribers[cam] = rospy.Subscriber("/{}/semantic".format(cam), Image, self._image_callback)
 
-        point_cloud_source = cfg.MAPPING.POINT_CLOUD_SOURCE
-        if point_cloud_source == "dense_pcd":
+        # The possible point cloud source
+        # dense_pcd - dense point cloud we generated from the map reduce function.
+        # raw_pcd - the point cloud returned directly from Velodyne sensor.
+        self._point_cloud_source = cfg.MAPPING.POINT_CLOUD_SOURCE
+        if self._point_cloud_source == "dense_pcd":
             self._subscribers["pcd"] = rospy.Subscriber("/reduced_map", PointCloud2, self._pcd_callback)
-        elif point_cloud_source == "raw_pcd":
+        elif self._point_cloud_source == "raw_pcd":
             self._subscribers["pcd"] = rospy.Subscriber("/points_raw", PointCloud2, self._pcd_callback)
         else:
             raise NotImplementedError
@@ -77,6 +80,7 @@ class SemanticMapping:
         self._publishers["semantic_local_map"] = rospy.Publisher("/semantic_local_map", Image, queue_size=5)
         self._publishers["pcd"] = rospy.Publisher("/semantic_point_cloud", PointCloud2, queue_size=5)
 
+        # Launch ROS specific classes
         self._tf_listener = TransformListener()
         self._tf_ros = TransformerROS()
         self._bridge = CvBridge()
@@ -99,123 +103,52 @@ class SemanticMapping:
         for cam in self._target_cameras:
             self.camera_models[cam] = build_camera_model(cam)
 
+        # ROS data queue
+        # Each element in the queue should be a tuple of (header, data), i.e. the same format that
+        # self._find_closest_data uses.
         self._pose_queue = deque()
         self._pcd_queue = deque()
 
-        self._load_constant_matrics()
-
-        self.pose = None
-        self.pose_queue = []
-        self.pose_time = None
-        rospy.logwarn("currently only for front view")
-
-        self.pcd = None
-        self.pcd_frame_id = None
-        self.pcd_queue = []
-        self.pcd_header_queue = []
-        self.pcd_time = None
-        self.pcd_range_max = cfg.MAPPING.PCD.RANGE_MAX
-        self.use_pcd_intensity = cfg.MAPPING.PCD.USE_INTENSITY
-
-        # The coordinate of the map is defined as map[x, y]
-        self.map = None
-        self.map_pose = None
-        self.save_map_to_file = False
-        self.map_boundary = cfg.MAPPING.BOUNDARY
-        self.resolution = cfg.MAPPING.RESOLUTION
-        self.label_names = cfg.LABELS_NAMES
-        self.label_colors = np.array(cfg.LABEL_COLORS)
-
-        self.map_height = int((self.map_boundary[0][1] - self.map_boundary[0][0]) / self.resolution)
-        self.map_width = int((self.map_boundary[1][1] - self.map_boundary[1][0]) / self.resolution)
-        self.map_depth = len(self.label_names)
-
-        self.position_rel = np.array([[0, 0, 0]]).T
-        self.yaw_rel = 0
-
-        self.preprocessing()
-
-        # This is a testing parameter, when the time stamp reach this number, the entire node will terminate.
-        self.test_cut_time = cfg.TEST_END_TIME
-
-        if cfg.MAPPING.CONFUSION_MTX.LOAD_PATH != "":
-            confusion_matrix = ConfusionMatrix(load_path=cfg.MAPPING.CONFUSION_MTX.LOAD_PATH)
-            self.confusion_matrix = confusion_matrix.get_submatrix(cfg.LABELS, to_probability=True, use_log=True)
-        else:
-            # Use Identity confusion matrix
-            self.confusion_matrix = np.eye(len(self.label_names))
-
-        # Print the configuration to user
-        self.logger.log("Running with configuration:\n" + str(cfg))
-
-        self.ground_truth_dir = cfg.GROUND_TRUTH_DIR
-        self.input_list = []
-        self.unique_input_dict = {}
-        self.input_dir = cfg.MAPPING.INPUT_DIR
-
-    def _load_constant_matrics(self):
-        """ Load the constant matrices into class attributes """
-        self.T_velodyne_to_basklink = self._set_velodyne_to_baselink()
-        self.T_camera_to_base = {}
-        for cam in self._target_cameras:
-            self.T_camera_to_base = np.matmul(self.T_velodyne_to_basklink, self.camera_models[cam].T)
-
-        self.discretize_matrix_inv = np.array([
-            [self.resolution, 0, self.map_boundary[0][0]],
-            [0, self.resolution, self.map_boundary[1][1]],
-            [0, 0, 1],
-        ]).astype(np.float)
-        self.discretize_matrix = np.linalg.inv(self.discretize_matrix_inv)
-
-        # self.anchor_points = np.array([
-        #     [self.map_width, self.map_width / 3, self.map_width, self.map_width / 3],
-        #     [self.map_height / 4, self.map_height / 4, self.map_height * 3 / 4, self.map_height * 3 / 4],
-        # ])
         #
-        # self.anchor_points_2 = np.array([
-        #     [self.map_width, self.map_width / 2, self.map_width / 2, self.map_width],
-        #     [self.map_height / 4, self.map_height / 4, self.map_height * 3 / 4, self.map_height * 3 / 4],
-        # ])
+        self._pcd_range_max = cfg.MAPPING.PCD.RANGE_MAX  # The maximum range of the point cloud
+        self._use_pcd_intensity = cfg.MAPPING.PCD.USE_INTENSITY
 
-    def _set_velodyne_to_baselink(self):
-        rospy.logwarn("velodyne to baselink from TF is tunned, current version fits best.")
+        self._map = None  # The coordinate of the map is defined as map[x, y]
+        self._map_height = int((self.map_boundary[0][1] - self.map_boundary[0][0]) / self.resolution)
+        self._map_width = int((self.map_boundary[1][1] - self.map_boundary[1][0]) / self.resolution)
+        self._label_names = cfg.LABELS_NAMES
+        self._map_depth = len(self.label_names)
+
+        self._load_constant()
+        self._set_global_map_pose()
+
+    def _load_constant(self):
+        """ Load the constant  """
+
+        # Determine the transformation from velodyne to baselink
+        # Note that the number here is tuned by experiments. Current version fits the best.
         T = euler_matrix(0., 0.140, 0.)
         t = np.array([[2.64, 0, 1.98]]).T
         T[0:3, -1::] = t
-        return T
+        self.T_velodyne_to_basklink = T
 
-    def _pcd_callback(self, msg):
+        # Determine the transformation from camera to baselink
+        self.T_camera_to_baselink = {}
+        for cam in self._target_cameras:
+            self.T_camera_to_baselink = np.matmul(self.T_velodyne_to_basklink, self.camera_models[cam].T)
+
+    def _set_global_map_pose(self):
         """
-        The callback function for point cloud
-
-        Args:
-            msg (PointCloud2): refer to this http://docs.ros.org/melodic/api/sensor_msgs/html/msg/PointCloud2.html
-
+        Set the origin of the pose in the global frame to the min x, y point in the point map so that the entire map
+        will have positive values
         """
-        # if False:
-        #     self.logger.warning("pcd data frame_id %s", msg.header.frame_id)
-        #     self.logger.debug("pcd data received")
-        #     self.logger.debug("pcd size: %d, %d", msg.height, msg.width)
-        #     self.logger.warning("pcd queue size: %d", len(self.pcd_queue))
-        pcd = np.empty((4, msg.width))
-        for i, el in enumerate(point_cloud2.read_points(msg, field_names=("x", "y", "z", "intensity"), skip_nans=True)):
-            pcd[:, i] = el
-        self.pcd_queue.append((msg.header, pcd))
-        self.pcd_frame_id = msg.header.frame_id
-
-    def _pose_callback(self, msg):
-        """
-
-        Args:
-            msg (PoseStamped): http://docs.ros.org/melodic/api/geometry_msgs/html/msg/PoseStamped.html
-
-        Returns:
-
-        """
-        self.pose_queue.append(msg)
-        if msg.header.stamp.secs >= self.test_cut_time:
-            self.save_map_to_file = True
-        rospy.logdebug("Pose queue length: %d", len(self.pose_queue))
+        pose = Pose()
+        # Number provided here is hard coded.
+        pose.position.x = -1369.0496826171875  # min x
+        pose.position.y = -562.84814453125  # min y
+        pose.position.z = 0.0
+        pose.orientation.w = 1.0
+        set_map_pose(pose, '/world', 'global_map')
 
     def _find_closest_data(self, queue, target_stamp):
         """
@@ -270,128 +203,96 @@ class SemanticMapping:
         else:
             return selected_elem
 
-    def update_pcd(self, target_stamp):
+    def _pcd_callback(self, msg):
         """
-        Find the closest point cloud wrt the target_stamp
-
-        We first want to find the smallest stamp that is larger than the timestamp, then compare it with the
-        largest stamp that is smaller than the timestamp. and then pick the smallest one as the result. If such
-        condition does not exist, i.e. all the stamps are smaller than the time stamp, we just pick the latest one.
+        The callback function for the incoming point cloud data
 
         Args:
-            target_stamp:
-
-        Returns:
+            msg (PointCloud2): refer to this http://docs.ros.org/melodic/api/sensor_msgs/html/msg/PointCloud2.html
 
         """
-        for i in range(len(self.pcd_header_queue) - 1):
-            if self.pcd_header_queue[i + 1].stamp > target_stamp:
-                if self.pcd_header_queue[i].stamp < target_stamp:
-                    diff_2 = self.pcd_header_queue[i + 1].stamp - target_stamp
-                    diff_1 = target_stamp - self.pcd_header_queue[i].stamp
-                    if diff_1 > diff_2:
-                        header = self.pcd_header_queue[i + 1]
-                        pcd = self.pcd_queue[i + 1]
-                    else:
-                        header = self.pcd_header_queue[i]
-                        pcd = self.pcd_queue[i]
-                    self.pcd_header_queue = self.pcd_header_queue[i::]
-                    self.pcd_queue = self.pcd_queue[i::]
-                    rospy.logdebug("Setting current pcd at: %d.%09ds", header.stamp.secs, header.stamp.nsecs)
-                    return pcd, header.stamp
-        header = self.pcd_header_queue[-1]
-        pcd = self.pcd_queue[-1]
-        self.pcd_header_queue = self.pcd_header_queue[-1::]
-        self.pcd_queue = self.pcd_queue[-1::]
-        rospy.logdebug("Setting current pcd at: %d.%09ds", header.stamp.secs, header.stamp.nsecs)
-        return pcd, header.stamp
+        # if False:
+        #     self.logger.warning("pcd data frame_id %s", msg.header.frame_id)
+        #     self.logger.debug("pcd data received")
+        #     self.logger.debug("pcd size: %d, %d", msg.height, msg.width)
+        #     self.logger.warning("pcd queue size: %d", len(self.pcd_queue))
+        pcd = np.empty((4, msg.width))
+        for i, el in enumerate(point_cloud2.read_points(msg, field_names=("x", "y", "z", "intensity"), skip_nans=True)):
+            pcd[:, i] = el
+        self.pcd_queue.append((msg.header, pcd))
 
-    def pose_callback(self, msg):
-        rospy.logdebug("Getting pose at: %d.%09ds", msg.header.stamp.secs, msg.header.stamp.nsecs)
-        self.pose_queue.append(msg)
+    def _pose_callback(self, msg):
+        """
+        The callback function for the incoming pose data
+
+        Args:
+            msg (PoseStamped): http://docs.ros.org/melodic/api/geometry_msgs/html/msg/PoseStamped.html
+
+        """
+        self.pose_queue.append((msg.header, msg))
+
+        # For testing purpose, if the receiving pose is greater than the test_cut_time, we stop the test and save the
+        # result.
         if msg.header.stamp.secs >= self.test_cut_time:
             self.save_map_to_file = True
-        rospy.logdebug("Pose queue length: %d", len(self.pose_queue))
 
-    def set_global_map_pose(self):
-        """ global map origin is shifted to the min x, y point in the point map
-        so that the entire map will have positive values """
-        pose = Pose()
-        pose.position.x = -1369.0496826171875  # min x
-        pose.position.y = -562.84814453125  # min y
-        pose.position.z = 0.0
-        pose.orientation.w = 1.0
-        set_map_pose(pose, '/world', 'global_map')
+    def _image_callback(self, msg):
+        """
+        The callback function for the incoming camera image. When a semantic camera image is published, this function
+        will be invoked and generate a BEV semantic occupancy grid from the image.
 
-    def update_pose(self, target_stamp):
-        """
-        Find the closest pose wrt the target_stamp.
+        Args:
+            msg (Image):
 
-        This is the same implementation as the update_pcd().
         """
-        for i in range(len(self.pose_queue) - 1):
-            if self.pose_queue[i + 1].header.stamp > target_stamp:
-                if self.pose_queue[i].header.stamp < target_stamp:
-                    diff_2 = self.pose_queue[i + 1].header.stamp - target_stamp
-                    diff_1 = target_stamp - self.pose_queue[i].header.stamp
-                    if diff_1 > diff_2:
-                        msg = self.pose_queue[i + 1]
-                    else:
-                        msg = self.pose_queue[i]
-                    self.pose_queue = self.pose_queue[i::]
-                    rospy.logdebug("Setting current pose at: %d.%09ds", msg.header.stamp.secs, msg.header.stamp.nsecs)
-                    return msg.pose, msg.header.stamp
-        msg = self.pose_queue[-1]
-        self.pose_queue = self.pose_queue[-1::]
-        rospy.logdebug("Setting current pose at: %d.%09ds", msg.header.stamp.secs, msg.header.stamp.nsecs)
-        return msg.pose, msg.header.stamp
-
-    def image_callback(self, msg):
-        """
-        The callback function for the camera image. When the semantic camera image is published, this function will be
-        invoked and generate a BEV semantic map from the image.
-        """
-        self.logger.log("Mapping image at: {}.{:.9f}s".format(msg.header.stamp.secs, msg.header.stamp.nsecs))
         try:
             image_in = self._bridge.imgmsg_to_cv2(msg, desired_encoding="passthrough")
         except CvBridgeError as e:
             print(e)
             return
 
-        if msg.header.frame_id == "camera1":
-            camera_calibration = self.cam1
-        elif msg.header.frame_id == "camera6":
-            camera_calibration = self.cam6
+        if msg.header.frame_id in self._target_cameras:
+            camera_model = self.camera_models[msg.header.frame_id]
         else:
-            rospy.logwarn("cannot find camera for frame_id %s", msg.header.frame_id)
+            self.logger.log("Unknown camera model {}".format(msg.header.frame_id))
+            return
 
-        if self.depth_method in ['points_map', 'points_raw']:
-            if len(self.pcd_header_queue) == 0: return
-            self.pcd, self.pcd_time = self.update_pcd(msg.header.stamp)
+        # Get the associated point cloud and point cloud for the image
+        retval = self._find_closest_data(self._pcd_queue, msg.header.stamp)
+        if retval is None: return  # If retval is None, we don't have associated point cloud, cannot proceed.
+        pcd_header, pcd = retval
 
-        if len(self.pose_queue) == 0: return
-        self.pose, self.pose_time = self.update_pose(msg.header.stamp)
-        self.set_global_map_pose()
+        retval = self._find_closest_data(self._pose_queue, msg.header.stamp)
+        if retval is None: return
+        pose_header, pose = retval
 
-        self.mapping(image_in, self.pose, camera_calibration)
+        self.mapping(image_in, pose, pcd, camera_model)
 
-        rospy.logdebug("Finished Mapping image at: %d.%09ds", msg.header.stamp.secs, msg.header.stamp.nsecs)
-
-    def mapping(self, semantic_image, pose, camera_calibration):
+    def mapping(self, semantic_image, pose, pcd, camera_model):
         """
-        Receives the semantic segmentation image, the pose of the vehicle, and the calibration of the camera,
-        we will build a semantic point cloud, then project it into the 2D bird's eye view coordinates.
+        Given a semantic image, its associated vehicle's pose of the vehicle, LiDAR point cloud and the camera model,
+        this function will build a semantic point cloud, then project it into the 2D bird's eye view coordinates.
 
         Args:
-            semantic_image: 2D semantic image
-            pose: vehicle pose
-            camera_calibration: The calibration information of the camera
+            semantic_image (np.ndarray): 2D semantic image
+            pose (PoseStamped): Vehicle pose in the world frame
+            pcd (np.ndarray): Point cloud
+            camera_model: Contains the calibration information of the camera
         """
         # Initialize the map
-        if self.map is None:
-            self.map = np.zeros((self.map_height, self.map_width, self.map_depth))
-            # self.unique_input_dict["initial_map"] = np.array(self.map)
-            # self.unique_input_dict["camera_calibration"] = camera_calibration
+        if self._map is None:
+            self._map = np.zeros((self._map_height, self._map_width, self._map_depth))
+
+        pcd_in_range, pcd_label = self.project_pcd(pcd, self._point_cloud_source, semantic_image, pose, camera_model)
+
+        # Maybe I should return this function and let its parent to handle this.
+        # Publish point cloud message
+        # pcd_msg = create_point_cloud(pcd_in_range[:3].T, pcd_label.T, frame_id=???)
+        # self._publishers["pcd"].publish(pcd_msg)
+
+        self._map = self.update_map(self._map, pcd_in_range, pcd_label)
+
+        return
 
         if self.depth_method in ['points_map', 'points_raw']:
             frame_input_dict = {"pcd": np.array(self.pcd),
@@ -400,18 +301,18 @@ class SemanticMapping:
                                 "pose": pose}
             self.input_list.append(frame_input_dict)
             pcd_in_range, pcd_label = self.project_pcd(self.pcd, self.pcd_frame_id, semantic_image, pose,
-                                                       camera_calibration)
+                                                       camera_model)
             pcd_pub = create_point_cloud(pcd_in_range[0:3].T, pcd_label.T, frame_id=self.pcd_frame_id)
             self.pub_pcd.publish(pcd_pub)
 
             self.map = self.update_map(self.map, pcd_in_range, pcd_label)
         else:
-            self.map = self.update_map_planar(self.map, semantic_image, camera_calibration)
+            self.map = self.update_map_planar(self.map, semantic_image, camera_model)
 
         if self.save_map_to_file:
             # with open(os.path.join(self.input_dir, "input_list.hkl"), 'wb') as fp:
             #     print("writing input_list ...")
-            #     hickle.dump(self.input_list, fp, mode='w')    
+            #     hickle.dump(self.input_list, fp, mode='w')
 
             output_dir = self.output_dir
             makedirs(output_dir, exist_ok=True)
@@ -442,37 +343,48 @@ class SemanticMapping:
             # TODO: This line of code is just for debugging purpose
             rospy.signal_shutdown('Done with the mapping')
 
-    def project_pcd(self, pcd, pcd_frame_id, image, pose, camera_calibration):
+    def project_pcd(self, pcd, pcd_source, image, pose, camera_model):
         """
-        Extract labels of each point in the pcd from image
-        Args:
-            camera_calibration:camera calibration information, it includes the camera projection matrix.
+        Project point cloud into the image and find the associate pixel value for each point.
 
-        Returns: Point cloud that are visible in the image, and their associated labels
+        Args:
+            pcd (np.ndarray): Point cloud. Depending on the source of the point cloud, If it is from dense point
+                cloud, then it is in the world frame. If it is from raw point cloud, then it is in the sensor's frame.
+            pcd_source (str): The source of the point cloud, please refer to self._point_cloud_source.
+            image (np.ndarray): 2D image, the shape of the image is (h, w, c)
+            pose (PoseStamped): Vehicle pose in the world frame
+            camera_model: The camera model, it contains the camera calibration information.
+
+        Returns:
+            masked_pcd (np.ndarray): Points that are visible in the image, in the same frame as the input pcd.
+                shape = (4, n)
+            label (np.ndarray): the pixel value for these visible points. shape = (3, n)
 
         """
         if pcd is None: return
-        if pcd_frame_id != "velodyne":
+        if pcd_source == "raw_pcd":
+            pcd_in_lidar_frame = homogenize(pcd[0:3, :])
+        elif pcd_source == "dense_pcd":
+            # Transform the point cloud from world frame to the LiDAR sensor's frame
             T_base_to_origin = get_transform_from_pose(pose)
             T_origin_to_velodyne = np.linalg.inv(np.matmul(T_base_to_origin, self.T_velodyne_to_basklink))
-
-            pcd_velodyne = np.matmul(T_origin_to_velodyne, homogenize(pcd[0:3, :]))
+            pcd_in_lidar_frame = np.matmul(T_origin_to_velodyne, homogenize(pcd[0:3, :]))
         else:
-            pcd_velodyne = homogenize(pcd[0:3, :])
+            raise NotImplementedError
 
-        IXY = dehomogenize(np.matmul(camera_calibration.P, pcd_velodyne)).astype(np.int32)
+        projected_pts = dehomogenize(np.matmul(camera_model.P, pcd_in_lidar_frame)).astype(np.int32)
 
         # Only use the points in the front.
-        mask_positive = np.logical_and(0 < pcd_velodyne[0, :], pcd_velodyne[0, :] < self.pcd_range_max)
+        mask_positive = np.logical_and(0 < pcd_in_lidar_frame[0, :], pcd_in_lidar_frame[0, :] < self._pcd_range_max)
 
         # Only select the points that project to the image
-        mask = np.logical_and(np.logical_and(0 <= IXY[0, :], IXY[0, :] < image.shape[1]),
-                              np.logical_and(0 <= IXY[1, :], IXY[1, :] < image.shape[0]))
+        mask = np.logical_and(np.logical_and(0 <= projected_pts[0, :], projected_pts[0, :] < image.shape[1]),
+                              np.logical_and(0 <= projected_pts[1, :], projected_pts[1, :] < image.shape[0]))
         mask = np.logical_and(mask, mask_positive)
 
         masked_pcd = pcd[:, mask]
-        image_idx = IXY[:, mask]
-        label = image[image_idx[1, :], image_idx[0, :]].T
+        image_idx = projected_pts[:, mask]
+        label = image[image_idx[1, :], image_idx[0, :]].T  # TODO: figure out the shape of the label
 
         return masked_pcd, label
 
@@ -532,110 +444,6 @@ class SemanticMapping:
 
         return map
 
-    def update_map_planar(self, map_local, image, cam):
-        """ Project the semantic image onto the map plane and update it """
-
-        # points_map = homogenize(np.array(self.anchor_points_2))
-        # points_local = np.matmul(self.discretize_matrix_inv, points_map)
-        # points_local[2, :] = 0
-        # points_local = homogenize(points_local)
-
-        T_local_to_base, _, _, _ = get_transformation(frame_from='/global_map', time_from=rospy.Time(0),
-                                                      frame_to='/base_link', time_to=self.pose_time,
-                                                      static_frame='world',
-                                                      tf_listener=self._tf_listener, tf_ros=self._tf_ros)
-        T_base_to_velodyne = np.linalg.inv(self.T_velodyne_to_basklink)
-        T_local_to_velodyne = np.matmul(T_base_to_velodyne, T_local_to_base)
-
-        points_base_link = np.array([[30, 10, 10, 30],
-                                     [0, 2, 5, 15],
-                                     [0, 0, 0, 0]], dtype=np.float)
-        points_global = np.matmul(np.linalg.inv(T_local_to_base), homogenize(points_base_link))
-        anchor_points_global = (
-                (points_global[0:2, :] - np.array([[self.map_boundary[0][0]], [self.map_boundary[1][0]]]))
-                / self.resolution).astype(np.int32)
-
-        # compute new points
-        points_velodyne = np.matmul(T_local_to_velodyne, points_global)
-        points_image = dehomogenize(np.matmul(cam.P, points_velodyne)).astype(np.int)
-
-        # generate homography
-        image_on_map = generate_homography(image, points_image.T, anchor_points_global.T, vis=True,
-                                           out_size=[self.map_height, self.map_width])
-        sep = int((8 - self.map_boundary[0][0]) / self.resolution)
-        mask = np.ones(map_local.shape[0:2])
-        # mask[:, 0:sep] = 0
-        idx_mask_3 = np.zeros([map_local.shape[0], map_local.shape[1], 3])
-
-        for i in range(len(self.label_names)):
-            idx = image_on_map[:, :, 0] == self.label_names[i]
-            idx_mask = np.logical_and(idx, mask)
-            map_local[idx_mask, i] += 1
-            # idx_mask_3[idx_mask] = self.catogories_color[i]
-        # cv2.imshow("mask", idx_mask_3.astype(np.uint8))
-        # cv2.waitKey(1)
-
-        map_local[map_local < 0] = 0
-
-        # threshold and normalize
-        # map_local[map_local > self.map_value_max] = self.map_value_max
-        # print("max:", np.max(map_local))
-        # normalized_map = self.normalize_map(map_local)
-
-        return map_local
-
-    def add_car_to_map(self, color_map):
-        """
-        Warning: This function is not tested, may have bug!
-        Args:
-            color_map:
-
-        Returns:
-
-        """
-
-        """ visualize ego car on the color map """
-        # setting parameters
-        length = 4.0
-        width = 1.8
-        mask_length = int(length / self.resolution)
-        mask_width = int(width / self.resolution)
-        car_center = np.array([[length / 4, width / 2]]).T / self.resolution
-        discretize_matrix_inv = np.array([
-            [self.resolution, 0, -length / 4],
-            [0, -self.resolution, width / 2],  # Warning: double check the sign of -self.resolution
-            [0, 0, 1]
-        ])
-
-        # pixels in ego frame
-        Ix = np.tile(np.arange(0, mask_length), mask_width)
-        Iy = np.repeat(np.arange(0, mask_width), mask_length)
-        Ixy = np.vstack([Ix, Iy])
-
-        # transform to map frame
-        R = get_rotation_from_angle_2d(self.yaw_rel)
-        Ixy_map = np.matmul(R, Ixy - car_center) + self.position_rel[0:2].reshape([2, 1]) / self.resolution + \
-                  np.array([[-self.map_boundary[0][0] / self.resolution, self.map_height / 2]]).T
-        Ixy_map = Ixy_map.astype(np.int)
-
-        # setting color
-        color_map[Ixy_map[1, :], Ixy_map[0, :], :] = [255, 0, 0]
-        return color_map
-
-    def get_extrinsics(self, pose, camera_id):
-        T_base_to_origin = get_transform_from_pose(pose)
-
-        # from camera to origin
-        if camera_id == "camera1":
-            T_cam_to_origin = np.matmul(T_base_to_origin, self.T_cam1_to_base)
-        elif camera_id == "camera6":
-            T_cam_to_origin = np.matmul(T_base_to_origin, self.T_cam6_to_base)
-        else:
-            rospy.logwarn("unable to find camera to base for camera_id %s", camera_id)
-        T_origin_to_cam = np.linalg.inv(T_cam_to_origin)
-        extrinsics = T_origin_to_cam[0:3]
-        return extrinsics
-
 
 def parse_args():
     """ Parse the command line arguments """
@@ -670,14 +478,34 @@ def main():
 if __name__ == "__main__":
     main()
 
-    # class QueueData:
-    #     """ A generic data format for ROS data """
-    #
-    #     def __init__(self, header, **kwargs):
-    #         self.header = header
-    #         self._data = {**kwargs}
-    #
-    #     def __getitem__(self, key):
-    #         if key not in self._data:
-    #             raise KeyError
-    #         return self._data[key]
+#
+# # The coordinate of the map is defined as map[x, y]
+# self.map = None
+# self.map_pose = None
+# self.save_map_to_file = False
+# self.map_boundary = cfg.MAPPING.BOUNDARY
+# self.resolution = cfg.MAPPING.RESOLUTION
+# self.label_names = cfg.LABELS_NAMES
+# self.label_colors = np.array(cfg.LABEL_COLORS)
+#
+# self.position_rel = np.array([[0, 0, 0]]).T
+# self.yaw_rel = 0
+#
+#
+# # This is a testing parameter, when the time stamp reach this number, the entire node will terminate.
+# self.test_cut_time = cfg.TEST_END_TIME
+#
+# if cfg.MAPPING.CONFUSION_MTX.LOAD_PATH != "":
+#     confusion_matrix = ConfusionMatrix(load_path=cfg.MAPPING.CONFUSION_MTX.LOAD_PATH)
+#     self.confusion_matrix = confusion_matrix.get_submatrix(cfg.LABELS, to_probability=True, use_log=True)
+# else:
+#     # Use Identity confusion matrix
+#     self.confusion_matrix = np.eye(len(self.label_names))
+#
+# # Print the configuration to user
+# self.logger.log("Running with configuration:\n" + str(cfg))
+#
+# self.ground_truth_dir = cfg.GROUND_TRUTH_DIR
+# self.input_list = []
+# self.unique_input_dict = {}
+# self.input_dir = cfg.MAPPING.INPUT_DIR

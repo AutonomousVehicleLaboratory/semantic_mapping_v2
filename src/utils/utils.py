@@ -66,16 +66,23 @@ def test_clip_pcd_by_distance_plane(pcd):
 
 
 def homogenize(x):
-    # converts points from inhomogeneous to homogeneous coordinates
+    """
+    Converts points from inhomogeneous to homogeneous coordinates
+    Args:
+        x (np.ndarray): inhomogeneous matrix with shape (3, n)
+
+    """
     return np.vstack((x, np.ones((1, x.shape[1]))))
 
 
 def dehomogenize(x):
-    # converts points from homogeneous to inhomogeneous coordinates
+    """
+    Converts points from homogeneous to inhomogeneous coordinates
+    Args:
+        x (np.ndarray): homogeneous matrix with shape (4, n)
+
+    """
     return x[:-1] / x[-1]
-
-
-from scipy.linalg import logm, expm
 
 
 # Note that np.sinc is different than defined in class
