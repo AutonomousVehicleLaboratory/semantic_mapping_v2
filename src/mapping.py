@@ -55,6 +55,7 @@ class SemanticMapping:
         """
         # Sanity check
         assert len(cfg.LABELS) == len(cfg.LABELS_NAMES) == len(cfg.LABEL_COLORS)
+        assert cfg.MAPPING.POINT_CLOUD_SOURCE in ["dense_pcd", "raw_pcd"]
 
         # Set up ROS subscribers
         self._subscribers = {}
@@ -162,7 +163,7 @@ class SemanticMapping:
         set_map_pose(pose, '/world', 'global_map')
 
         # pcd origin with respect to map origin
-        self._pcd_origin_offset = np.array([-min_x, -min_y, -min_z])
+        self._pcd_origin_offset = np.array([[-min_x], [-min_y], [-min_z]])
 
     def _find_closest_data(self, queue, target_stamp):
         """
@@ -225,11 +226,10 @@ class SemanticMapping:
             msg (PointCloud2): refer to this http://docs.ros.org/melodic/api/sensor_msgs/html/msg/PointCloud2.html
 
         """
-        # if False:
-        #     self.logger.warning("pcd data frame_id %s", msg.header.frame_id)
-        #     self.logger.debug("pcd data received")
-        #     self.logger.debug("pcd size: %d, %d", msg.height, msg.width)
-        #     self.logger.warning("pcd queue size: %d", len(self.pcd_queue))
+        self.logger.info("Receive PCD!")
+        # self.logger.info("pcd data frame_id {}".format(msg.header.frame_id))
+        # self.logger.info("pcd size: {}, {}".format(msg.height, msg.width))
+        # self.logger.info("pcd queue size: {}".format(len(self._pcd_queue)))
         pcd = np.empty((4, msg.width))
         for i, el in enumerate(point_cloud2.read_points(msg, field_names=("x", "y", "z", "intensity"), skip_nans=True)):
             pcd[:, i] = el
@@ -243,7 +243,8 @@ class SemanticMapping:
             msg (PoseStamped): http://docs.ros.org/melodic/api/geometry_msgs/html/msg/PoseStamped.html
 
         """
-        self._pose_queue.append((msg.header, msg))
+        self.logger.info(("Receive pose!"))
+        self._pose_queue.append((msg.header, msg.pose))
 
     def _image_callback(self, msg):
         """
@@ -254,6 +255,7 @@ class SemanticMapping:
             msg (Image):
 
         """
+        self.logger.info("Receive semantic image!")
         try:
             image_in = self._bridge.imgmsg_to_cv2(msg, desired_encoding="passthrough")
         except CvBridgeError as e:
@@ -263,16 +265,21 @@ class SemanticMapping:
         if msg.header.frame_id in self._target_cameras:
             camera_model = self.camera_models[msg.header.frame_id]
         else:
-            self.logger.log("Unknown camera model {}".format(msg.header.frame_id))
+            self.logger.info("Unknown camera model {}".format(msg.header.frame_id))
             return
 
         # Get the associated point cloud and pose for the image
         retval = self._find_closest_data(self._pcd_queue, msg.header.stamp)
-        if retval is None: return  # If retval is None, we don't have associated point cloud, cannot proceed.
+        if retval is None:
+            # If retval is None, we don't have associated point cloud, cannot proceed.
+            self.logger.info("{} - Receive no point cloud!".format("_image_callback()"))
+            return
         pcd_header, pcd = retval
 
         retval = self._find_closest_data(self._pose_queue, msg.header.stamp)
-        if retval is None: return
+        if retval is None:
+            self.logger.info("{} - Receive no pose!".format("_image_callback()"))
+            return
         pose_header, pose = retval
 
         out_dict = self.mapping(image_in, pose, pcd, camera_model)
@@ -460,7 +467,7 @@ def main():
     if args.config_file:
         cfg.merge_from_file(args.config_file)
 
-    sm = SemanticMapping(cfg)
+    sem_mapping = SemanticMapping(cfg)
     rospy.spin()
 
 

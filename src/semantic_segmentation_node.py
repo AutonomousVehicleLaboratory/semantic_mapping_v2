@@ -81,7 +81,21 @@ class SemanticSegmentationNode:
         self._target_cameras = cfg.SEM_SEG.TARGET_CAMERAS
         queue_size = 1  # If needed, consider put it into config
 
+        # Collect the camera models
+        self.camera_models = {}
+        for cam in self._target_cameras:
+            self.camera_models[cam] = build_camera_model(cam)
+
+        # Setup the semantic segmentation network
+        network_cfg = cfg.SEM_SEG.NETWORK
+        self.network = SemanticSegmentation(network_cfg)
+        self.semantic_color_fn = mapillary_visualization.apply_color_map
+        self.semantic_color_reference = mapillary_visualization.get_labels(network_cfg.DATASET.CONFIG_PATH)
+        self.input_image_scale = cfg.SEM_SEG.IMAGE_SCALE
+
         # Build ROS subscriber and publisher
+        # Note that it is recommended to declare the variables that will be used in the callback function BEFORE the
+        # subscriber and publisher. Because the callback function can be invoked before the initialization completes.
         self._img_subscriber = {}
         for cam in self._target_cameras:
             self._img_subscriber[cam] = rospy.Subscriber(
@@ -95,18 +109,6 @@ class SemanticSegmentationNode:
         self._img_publisher = {}
         for cam in self._target_cameras:
             self._img_publisher[cam] = rospy.Publisher("/{}/semantic".format(cam), Image, queue_size=queue_size)
-
-        # Collect the camera models
-        self.camera_models = {}
-        for cam in self._target_cameras:
-            self.camera_models[cam] = build_camera_model(cam)
-
-        # Setup the semantic segmentation network
-        network_cfg = cfg.SEM_SEG.NETWORK
-        self.network = SemanticSegmentation(network_cfg)
-        self.semantic_color_fn = mapillary_visualization.apply_color_map
-        self.semantic_color_reference = mapillary_visualization.get_labels(network_cfg.DATASET.CONFIG_PATH)
-        self.input_image_scale = cfg.SEM_SEG.IMAGE_SCALE
 
         self._bridge = CvBridge()
 

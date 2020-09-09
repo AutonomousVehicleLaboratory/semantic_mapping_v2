@@ -54,7 +54,7 @@ bash ./install_ros_python_packages.sh
 
 ### Create ROS node
 
-In order for your Python script to be detectable by the `catkin_make`, you have to make it `executable`. Actually, `catkin_make` will collect all the executable files in your source code and make them visible in `rosrun/roslaunch`. 
+In order for your Python script to be detectable by the `catkin_make`, you have to make it `executable`. Actually, `catkin_make` will collect all the executable files in your source code and make them visible in `rosrun/roslaunch`. Similarly, this rule also applies to the `roslaunch`. Reference: [here](https://answers.ros.org/question/145801/cant-locate-node-in-package/). 
 
 
 
