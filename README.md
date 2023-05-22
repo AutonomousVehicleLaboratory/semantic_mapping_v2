@@ -4,12 +4,15 @@ This is the repository for our submission to [Special Issue "Advanced Sensing Te
 
 The source code freeze at our submission can be found in branch [hrnet_sensors_submit](https://github.com/AutonomousVehicleLaboratory/semantic_mapping_v2/tree/hrnet_sensors_submit) and [deeplab_sensors_submit](https://github.com/AutonomousVehicleLaboratory/semantic_mapping_v2/tree/deeplab_sensors_submit).
 
+Our mapping results for different ablation studies and groundtruth labels are available in [Google Drive](https://drive.google.com/drive/folders/1eMRNIizjmEStxS0i_ZaKjc9z9hFkRSqN?usp=sharing). Additonal mapping results are also shared. 
+
+
 TODO:
 1. [x] open-source code
 2. [ ] refactor code
-3. [ ] make data availble (anonymized rosbag and ground truth)
+3. [ ] make data availble ([ ] anonymized rosbag and [x] ground truth)
 4. [ ] user guide with docker
-5. [ ] add sample results
+5. [x] add sample results
 
 
 
