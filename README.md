@@ -6,6 +6,11 @@ The source code freeze at our submission can be found in branch [hrnet_sensors_s
 
 Our mapping results for different ablation studies and groundtruth labels are available in [Google Drive](https://drive.google.com/drive/folders/1eMRNIizjmEStxS0i_ZaKjc9z9hFkRSqN?usp=sharing). Additonal mapping results are also shared. 
 
+To run the experiment, [pcl_ros](http://wiki.ros.org/pcl_ros) and [map_reduction](https://github.com/AutonomousVehicleLaboratory/map_reduction) are also used. The former loads a point cloud map and the latter crops the point cloud map based on localization information. Download the point cloud map from the Google Drive PointCloudMap folder.
+
+```
+rosrun pcl_ros pcd_to_pointcloud /path/to/point_cloud_map.pcd 0.1 _frame_id:=map /cloud_pcd:=/points_map
+```
 
 TODO:
 1. [x] open-source code
@@ -17,7 +22,10 @@ TODO:
 
 
 
+
 The below guide is the initial version and will be updated soon.
+
+
 
 ## Introduction
 
