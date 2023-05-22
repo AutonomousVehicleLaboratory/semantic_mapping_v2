@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 """ Semantic mapping
 
 Author: Henry Zhang
@@ -24,7 +24,7 @@ from tf import TransformListener, TransformerROS
 from tf.transformations import euler_matrix
 
 from src.camera import camera_setup_1, camera_setup_6
-from src.node_config.base_cfg import get_cfg_defaults
+from src.config.base_cfg import get_cfg_defaults
 from src.data.confusion_matrix import ConfusionMatrix
 from src.homography import generate_homography
 from src.renderer import render_bev_map, render_bev_map_with_thresholds, apply_filter

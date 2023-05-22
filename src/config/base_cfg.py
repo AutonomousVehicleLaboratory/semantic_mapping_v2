@@ -27,7 +27,7 @@ def get_cfg_defaults():
 # --------------------------------------------------------------------------- #
 # We will create a sub-folder with this name in the output directory
 # _C.TASK_NAME = "vanilla_confusion_matrix"
-_C.TASK_NAME = "deeplabv3plus_results_real_time"
+_C.TASK_NAME = "deeplabv3plus_results"
 
 # '@' here means the root directory of the project
 _C.OUTPUT_DIR = "@/outputs"
@@ -96,8 +96,8 @@ _C.MAPPING.DEPTH_METHOD = 'points_map'
 _C.MAPPING.PCD = CN()
 # If True, use the point cloud intensity data to augment our semantic BEV estimation
 _C.MAPPING.PCD.USE_INTENSITY = True
-_C.MAPPING.PCD.RANGE_MAX = 15.0
-# _C.MAPPING.PCD.RANGE_MAX = 10.0
+# _C.MAPPING.PCD.RANGE_MAX = 15.0
+_C.MAPPING.PCD.RANGE_MAX = 10.0
 
 _C.MAPPING.CONFUSION_MTX = CN()
 # The load path of the confusion matrix
@@ -114,7 +114,7 @@ _C.MAPPING.ROUND_CLOSE = True
 _C.VISION_SEM_SEG = CN()
 
 # Determine the scale of the input image, from 0 to 1.
-_C.VISION_SEM_SEG.IMAGE_SCALE = 0.3
+_C.VISION_SEM_SEG.IMAGE_SCALE = 1.0
 
 # --------------------------------------------------------------------------- #
 # Semantic Segmentation Network Configuration

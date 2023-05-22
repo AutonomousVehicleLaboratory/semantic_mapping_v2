@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 """ Projection the semantic image to the world frame
 
 Author: Henry Zhang

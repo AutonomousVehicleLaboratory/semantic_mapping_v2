@@ -29,12 +29,11 @@ from shape_msgs.msg import Plane
 from visualization_msgs.msg import Marker, MarkerArray
 
 from src.camera import camera_setup_6, camera_setup_1
-from src.node_config.base_cfg import get_cfg_defaults
+from src.config.base_cfg import get_cfg_defaults
 from src.network.core.utils.torch_util import set_random_seed
 from src.plane_3d import Plane3D
 from src.semantic_convex_hull import generate_convex_hull
-# from src.semantic_segmentation import SemanticSegmentation  # source code
-from src.hrnet.hrnet_semantic_segmentation import HRNetSemanticSegmentation, get_custom_hrnet_args
+from src.semantic_segmentation import SemanticSegmentation  # source code
 from src.vis import visualize_marker
 
 
@@ -47,8 +46,8 @@ class VisionSemanticSegmentationNode:
 
         # Set up ros message subscriber
         # Note that topics ".../image_raw" are created by the launch file
-        self.image_sub_cam1 = rospy.Subscriber("/camera1/image_raw", Image, self.image_callback, queue_size=1)
-        self.image_sub_cam6 = rospy.Subscriber("/camera6/image_raw", Image, self.image_callback, queue_size=1)
+        self.image_sub_cam1 = rospy.Subscriber("/camera1/image_raw", Image, self.image_callback)
+        self.image_sub_cam6 = rospy.Subscriber("/camera6/image_raw", Image, self.image_callback)
         self.plane_sub = rospy.Subscriber("/estimated_plane", Plane, self.plane_callback)
 
         # Set up ros message publisher
@@ -59,8 +58,7 @@ class VisionSemanticSegmentationNode:
 
         # Load the configuration
         network_cfg = cfg.VISION_SEM_SEG.SEM_SEG_NETWORK
-        # self.seg = SemanticSegmentation(network_cfg)
-        self.seg = HRNetSemanticSegmentation(get_custom_hrnet_args())
+        self.seg = SemanticSegmentation(network_cfg)
         self.seg_color_fn = mapillary_visl.apply_color_map
         self.seg_color_ref = mapillary_visl.get_labels(network_cfg.DATASET_CONFIG)
 
@@ -72,6 +70,7 @@ class VisionSemanticSegmentationNode:
         self.hull_id = 0
         self.image_scale = cfg.VISION_SEM_SEG.IMAGE_SCALE  # Resize the image to reduce the memory overhead, in percentage.
         self.bridge = CvBridge()
+        print("Initialization Done.")
 
     def image_callback(self, msg):
         rospy.logdebug("Segmented image at: %d.%09ds", msg.header.stamp.secs, msg.header.stamp.nsecs)
@@ -101,7 +100,7 @@ class VisionSemanticSegmentationNode:
 
         ## ========== semantic segmentation
         image_out_resized = self.seg.segmentation(image_in_resized)
-        image_out_resized = image_out_resized.astype(np.uint8).squeeze()
+        image_out_resized = image_out_resized.astype(np.uint8)
 
         ## ========== semantic extraction
         # self.generate_and_publish_convex_hull(image_out_resized, msg.header.frame_id, index_care_about=2) # cross walk
