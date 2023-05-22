@@ -10,7 +10,8 @@ Our mapping results for different ablation studies and groundtruth labels are av
 TODO:
 1. [x] open-source code
 2. [ ] refactor code
-3. [ ] make data availble ([ ] anonymized rosbag and [x] ground truth)
+3. [ ] make data available (anonymized rosbag)
+4. [x] make result map and ground truth available
 4. [ ] user guide with docker
 5. [x] add sample results
 
