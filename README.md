@@ -1,6 +1,22 @@
-# Probabilistic Semantic Mapping
+# Probabilistic Semantic Mapping for Autonomous Driving in Urban Environment
 
-This is the internal source code of semantic mapping in AVL. It stems from [our implementation](https://github.com/AutonomousVehicleLaboratory/vision_semantic_segmentation) for the IROS 2020 and extends beyond that. If you are looking for our IROS implementation, you should look at the link above. But still the fundamental idea does not change here. We will fuse the LiDAR point cloud with the semantic segmented 2D camera image together and create a bird's-eye-view semantic map of the environment. We are developing this repository to adapt new sensor suits and new software architectures. 
+This is the repository for our submission to [Special Issue "Advanced Sensing Techniques for Autonomous Vehicles and Advanced Driver Assistance Systems (ADAS)"](https://www.mdpi.com/si/sensors/autonomous_vehicles_ADAS).
+
+The source code freeze at our submission can be found in branch [hrnet_sensors_submit](https://github.com/AutonomousVehicleLaboratory/semantic_mapping_v2/tree/hrnet_sensors_submit) and [deeplab_sensors_submit](https://github.com/AutonomousVehicleLaboratory/semantic_mapping_v2/tree/deeplab_sensors_submit).
+
+TODO:
+1. [x] open-source code
+2. [] refactor code
+3. [] make data availble (anonymized version)
+4. [] user guide
+
+
+
+The below guide is the initial version and will be updated soon.
+
+## Introduction
+
+We will fuse the LiDAR point cloud with the semantic segmented 2D camera image together and create a bird's-eye-view semantic map of the environment. We are developing this repository to adapt new sensor suits and new software architectures. 
 
 ## Setup
 
