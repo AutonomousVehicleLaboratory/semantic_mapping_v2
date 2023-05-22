@@ -8,7 +8,7 @@ TODO:
 1. [x] open-source code
 2. [ ] refactor code
 3. [ ] make data availble (anonymized rosbag and ground truth)
-4. [ ] user guide
+4. [ ] user guide with docker
 5. [ ] add sample results
 
 
