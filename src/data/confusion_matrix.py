@@ -16,6 +16,7 @@ class ConfusionMatrix:
         Args:
             load_path: str.
         """
+        print('loading confusion matrix from path:', load_path)
         self._cfn_mtx = np.load(load_path)
 
         height, width = self._cfn_mtx.shape
@@ -62,19 +63,45 @@ class ConfusionMatrix:
         # Need to change the np.sum(mtx, axis=1) shape to (-1, 1) otherwise the division is wrong.
         return mtx / np.sum(mtx, axis=1)[:, np.newaxis]
 
+    def merge_labels(self, src_indices, dst_indices):
+        if len(src_indices) > 0 and len(dst_indices) > 0 and len(src_indices) == len(dst_indices):
+            for src_idx, dst_idx in zip(src_indices, dst_indices):
+                self._cfn_mtx[dst_idx,:] += self._cfn_mtx[src_idx,:]
+                self._cfn_mtx[src_idx,:] = 0
+                self._cfn_mtx[:,dst_idx] += self._cfn_mtx[:,src_idx]
+                self._cfn_mtx[:,src_idx] = 0
+
+
+def adjust_for_mapping(mat, factor=2.0):
+    # adjust confusion matrix to account for mapping error
+    # reduce lane detection label confidence and shift to road
+    mat[2,0] += (1.0-1.0/factor) * mat[2,2]
+    mat[2,2] = mat[2,2] / factor
+    return mat
+
 
 if __name__ == '__main__':
     cfn_mtx = ConfusionMatrix(
-        "/home/qinru/avl/playground/vision_semantic_segmentation/external_data/confusion_matrix/run_trad_cnn/cfn_mtx.npy")
-
+        # "/home/hzhang/data/resnext50_os8/cfn_mtx.npy"
+        "/home/hzhang/data/hrnet/hrnet_cfn_1999.npy"
+    )
     print(cfn_mtx)
     print(len(cfn_mtx))
 
     # indices = [1, 3, 5, 6]
     indices = [2, 1, 8, 10, 3]
-    sub_mtx = cfn_mtx.get_submatrix(indices, True)
+
+    indices = [13, 8, 24, 30, 15 ]
+    src_indices = [23, 7]
+    dst_indices = [8, 13]
+    cfn_mtx.merge_labels(src_indices, dst_indices)
+
+    # indices = [, ]
+    sub_mtx = cfn_mtx.get_submatrix(indices, False, False)
     # for i in range(len(indices)):
     #     assert sub_mtx[i, 0] == cfn_mtx[indices[i], indices[0]]
+    sub_mtx = adjust_for_mapping(sub_mtx, factor=2.0)
+    sub_mtx = sub_mtx / np.sum(sub_mtx, axis=1)[:, np.newaxis]
     print(sub_mtx)
 
     # Test if the sum of each class is correct

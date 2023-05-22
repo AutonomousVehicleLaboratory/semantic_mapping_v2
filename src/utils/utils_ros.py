@@ -9,16 +9,13 @@ import rospy
 import numpy as np
 import struct
 
-try:
-    import tf_conversions
-    from tf import TransformBroadcaster, TransformListener, TransformerROS, LookupException, ConnectivityException, ExtrapolationException
-    from tf.transformations import quaternion_matrix, euler_from_quaternion, euler_matrix
-    from geometry_msgs.msg import TransformStamped
-    from sensor_msgs import point_cloud2
-    from sensor_msgs.msg import PointCloud2, PointField
-    from std_msgs.msg import Header
-except:
-    pass
+from tf import TransformBroadcaster, TransformListener, TransformerROS, LookupException, ConnectivityException, ExtrapolationException
+from tf.transformations import quaternion_matrix, euler_from_quaternion, euler_matrix
+import tf_conversions
+from geometry_msgs.msg import TransformStamped
+from sensor_msgs import point_cloud2
+from sensor_msgs.msg import PointCloud2, PointField
+from std_msgs.msg import Header
 
 # parameters
 
@@ -28,6 +25,7 @@ except:
 
 # functions
 
+pub = rospy.Publisher("point_cloud2", PointCloud2, queue_size=2)
 
 
 def create_point_cloud(xyz, rgb=None, frame_id='world'):
