@@ -7,8 +7,9 @@ The source code freeze at our submission can be found in branch [hrnet_sensors_s
 TODO:
 1. [x] open-source code
 2. [ ] refactor code
-3. [ ] make data availble (anonymized version)
+3. [ ] make data availble (anonymized rosbag and ground truth)
 4. [ ] user guide
+5. [ ] add sample results
 
 
 
