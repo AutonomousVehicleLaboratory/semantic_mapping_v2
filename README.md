@@ -4,7 +4,7 @@ This is the repository for our submission to [Special Issue "Advanced Sensing Te
 
 The source code freeze at our submission can be found in branch [hrnet_sensors_submit](https://github.com/AutonomousVehicleLaboratory/semantic_mapping_v2/tree/hrnet_sensors_submit) and [deeplab_sensors_submit](https://github.com/AutonomousVehicleLaboratory/semantic_mapping_v2/tree/deeplab_sensors_submit).
 
-Our mapping results for different ablation studies and groundtruth labels are available in [Google Drive](https://drive.google.com/drive/folders/1eMRNIizjmEStxS0i_ZaKjc9z9hFkRSqN?usp=sharing). Additonal mapping results are also shared. 
+Our anonymized rosbag data, mapping results for different ablation studies and groundtruth labels are available in [Google Drive](https://drive.google.com/drive/folders/1eMRNIizjmEStxS0i_ZaKjc9z9hFkRSqN?usp=sharing). Additonal mapping results are also shared. 
 
 To run the experiment, we encourage use the docker file we provided to build an environment that allows hrnet and deeplab and their ROS wrappers to work properly. Build the base-cuda docker image first, them semantic-mapping docker image will depend on it.
 
@@ -17,7 +17,7 @@ rosrun pcl_ros pcd_to_pointcloud /path/to/point_cloud_map.pcd 0.1 _frame_id:=map
 TODO:
 1. [x] open-source code
 2. [ ] refactor code
-3. [ ] make data available (anonymized rosbag)
+3. [x] make data available (anonymized rosbag)
 4. [x] make result map and ground truth available
 5. [ ] user guide
 6. [x] docker file
