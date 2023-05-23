@@ -6,7 +6,9 @@ The source code freeze at our submission can be found in branch [hrnet_sensors_s
 
 Our mapping results for different ablation studies and groundtruth labels are available in [Google Drive](https://drive.google.com/drive/folders/1eMRNIizjmEStxS0i_ZaKjc9z9hFkRSqN?usp=sharing). Additonal mapping results are also shared. 
 
-To run the experiment, [pcl_ros](http://wiki.ros.org/pcl_ros) and [map_reduction](https://github.com/AutonomousVehicleLaboratory/map_reduction) are also used. The former loads a point cloud map and the latter crops the point cloud map based on localization information. Download the point cloud map from the Google Drive PointCloudMap folder.
+To run the experiment, we encourage use the docker file we provided to build an environment that allows hrnet and deeplab and their ROS wrappers to work properly. Build the base-cuda docker image first, them semantic-mapping docker image will depend on it.
+
+In additional to code in this repository, we will also need [pcl_ros](http://wiki.ros.org/pcl_ros) and [map_reduction](https://github.com/AutonomousVehicleLaboratory/map_reduction) are also used. The former loads a point cloud map and the latter crops the point cloud map based on localization information. Download the point cloud map from the Google Drive PointCloudMap folder.
 
 ```
 rosrun pcl_ros pcd_to_pointcloud /path/to/point_cloud_map.pcd 0.1 _frame_id:=map /cloud_pcd:=/points_map
@@ -17,7 +19,8 @@ TODO:
 2. [ ] refactor code
 3. [ ] make data available (anonymized rosbag)
 4. [x] make result map and ground truth available
-4. [ ] user guide with docker
+5. [ ] user guide
+6. [x] docker file
 5. [x] add sample results
 
 
