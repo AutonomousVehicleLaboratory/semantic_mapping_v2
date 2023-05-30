@@ -1,8 +1,8 @@
 <?xml version="1.0"?>
 <package format="2">
-  <name>semantic_mapping</name>
+  <name>vision_semantic_segmentation</name>
   <version>0.0.0</version>
-  <description>The semantic segmentation package</description>
+  <description>The vision_semantic_segmentation package</description>
 
   <!-- One maintainer tag required, multiple allowed, one person per tag -->
   <!-- Example:  -->

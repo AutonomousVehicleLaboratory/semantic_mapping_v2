@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 """ Semantic mapping
 
 Author: Henry Zhang
@@ -8,29 +8,25 @@ Date:February 24, 2020
 import argparse
 import cv2
 import numpy as np
+import os
 import os.path as osp
 import rospy
 import sys
+import hickle
 
 # Add src directory into the path
 sys.path.insert(0, osp.abspath(osp.join(osp.dirname(__file__), "../")))
 
-# Package that cannot be installed by pip (or is outdated because of the specific ROS version we use)
-try:
-    from cv_bridge import CvBridge, CvBridgeError
-    from geometry_msgs.msg import PoseStamped, Pose
-    from sensor_msgs import point_cloud2
-    from sensor_msgs.msg import Image, PointCloud2
-    from tf import TransformListener, TransformerROS
-    from tf.transformations import euler_matrix
-except:
-    pass
+from cv_bridge import CvBridge, CvBridgeError
+from geometry_msgs.msg import PoseStamped, Pose
+from sensor_msgs.msg import Image, PointCloud2
+from sensor_msgs import point_cloud2 as pc2
+from tf import TransformListener, TransformerROS
+from tf.transformations import euler_matrix
 
-from collections import deque
-
-from src.camera import build_camera_model
-from src.config.mapping import get_cfg_defaults
-from src.data.confusion_matrix import ConfusionMatrix
+from src.camera import camera_setup_1, camera_setup_6
+from src.node_config.base_cfg import get_cfg_defaults
+from src.data.confusion_matrix import ConfusionMatrix, adjust_for_mapping
 from src.homography import generate_homography
 from src.renderer import render_bev_map, render_bev_map_with_thresholds, apply_filter
 from src.utils.utils import homogenize, dehomogenize, get_rotation_from_angle_2d
@@ -38,7 +34,6 @@ from src.utils.utils_ros import set_map_pose, get_transformation, get_transform_
 from src.utils.logger import MyLogger
 from src.utils.file_io import makedirs
 from test.test_semantic_mapping import Test
-
 
 class SemanticMapping:
     """
@@ -56,57 +51,47 @@ class SemanticMapping:
         # Sanity check
         assert len(cfg.LABELS) == len(cfg.LABELS_NAMES) == len(cfg.LABEL_COLORS)
 
-        # Set up ROS subscribers
-        self._subscribers = {}
-        self._subscribers["pose"] = rospy.Subscriber("/current_pose", PoseStamped, self._pose_callback)
+        # Set up ros subscribers
+        self.sub_pose = rospy.Subscriber("/current_pose", PoseStamped, self.pose_callback)
+        self.image_sub_cam1 = rospy.Subscriber("/camera1/semantic", Image, self.image_callback, queue_size=1)
+        self.image_sub_cam6 = rospy.Subscriber("/camera6/semantic", Image, self.image_callback, queue_size=1)
 
-        self._target_cameras = cfg.SEM_SEG.TARGET_CAMERAS
-        for cam in self._target_cameras:
-            self._subscribers[cam] = rospy.Subscriber("/{}/semantic".format(cam), Image, self._image_callback)
-
-        point_cloud_source = cfg.MAPPING.POINT_CLOUD_SOURCE
-        if point_cloud_source == "dense_pcd":
-            self._subscribers["pcd"] = rospy.Subscriber("/reduced_map", PointCloud2, self._pcd_callback)
-        elif point_cloud_source == "raw_pcd":
-            self._subscribers["pcd"] = rospy.Subscriber("/points_raw", PointCloud2, self._pcd_callback)
+        self.depth_method = cfg.MAPPING.DEPTH_METHOD
+        if self.depth_method == 'points_map':
+            self.sub_pcd = rospy.Subscriber("/reduced_map", PointCloud2, self.pcd_callback)
+        elif self.depth_method == 'points_raw':
+            self.sub_pcd = rospy.Subscriber("/points_raw", PointCloud2, self.pcd_callback)
         else:
-            raise NotImplementedError
+            rospy.logwarn("Depth estimation method set to others, use planar assumption!")
 
-        # Set up ROS publishers
-        self._publishers = {}
-        self._publishers["semantic_local_map"] = rospy.Publisher("/semantic_local_map", Image, queue_size=5)
-        self._publishers["pcd"] = rospy.Publisher("/semantic_point_cloud", PointCloud2, queue_size=5)
+        # Set up ros publishers
+        self.pub_semantic_local_map = rospy.Publisher("/semantic_local_map", Image, queue_size=5)
+        self.pub_pcd = rospy.Publisher("/semantic_point_cloud", PointCloud2, queue_size=5)
 
-        self._tf_listener = TransformListener()
-        self._tf_ros = TransformerROS()
-        self._bridge = CvBridge()
+        self.tf_listener = TransformListener()
+        self.tf_ros = TransformerROS()
+        self.bridge = CvBridge()
 
         # Set up the output directory
         output_dir = cfg.OUTPUT_DIR  # type:str
-        # If output directory is empty, we set it to the [project root directory]/outputs/[TASK_NAME]
-        if not output_dir:
-            output_dir = osp.abspath(osp.join(osp.dirname(__file__), "../outputs"))
-        output_dir = osp.join(output_dir, cfg.TASK_NAME)
+        if '@' in output_dir:
+            # Replace @ with the project root directory
+            output_dir = output_dir.replace('@', osp.join(osp.dirname(__file__), "../"))
+            # Create a sub-folder in the output directory with the name of cfg.TASK_NAME
+            output_dir = osp.join(output_dir, cfg.TASK_NAME)
+            output_dir = osp.abspath(output_dir)
 
         # Set up the logger
-        self.logger = MyLogger("mapping", save_dir=output_dir, use_timestamp=True)
+        self.logger = MyLogger("mapping", save_dir=output_dir, use_timestamp=False)
         # Because logger will create create a sub folder "version_xxx", we need to update the output_dir
         output_dir = self.logger.save_dir
         self.output_dir = output_dir
 
-        # Load camera model
-        self.camera_models = {}
-        for cam in self._target_cameras:
-            self.camera_models[cam] = build_camera_model(cam)
-
-        self._pose_queue = deque()
-        self._pcd_queue = deque()
-
-        self._load_constant_matrics()
-
         self.pose = None
         self.pose_queue = []
         self.pose_time = None
+        self.cam1 = camera_setup_1()
+        self.cam6 = camera_setup_6()
         rospy.logwarn("currently only for front view")
 
         self.pcd = None
@@ -122,12 +107,23 @@ class SemanticMapping:
         self.map_pose = None
         self.save_map_to_file = False
         self.map_boundary = cfg.MAPPING.BOUNDARY
+        self.prev_map = cfg.MAPPING.PREV_MAP
+        
+        if(self.prev_map != ""):
+            print("------------------------------------------------")
+            print("Restoring map: " + str(self.prev_map))
+            self.map = np.load(self.prev_map)
+            print("------------------------------------------------")
         self.resolution = cfg.MAPPING.RESOLUTION
         self.label_names = cfg.LABELS_NAMES
         self.label_colors = np.array(cfg.LABEL_COLORS)
+        self.color_remap_source = np.array(cfg.COLOR_REMAP_SOURCE)
+        self.color_remap_dest = np.array(cfg.COLOR_REMAP_DEST)
 
-        self.map_height = int((self.map_boundary[0][1] - self.map_boundary[0][0]) / self.resolution)
-        self.map_width = int((self.map_boundary[1][1] - self.map_boundary[1][0]) / self.resolution)
+        #self.map_height = int((self.map_boundary[0][1] - self.map_boundary[0][0]) / self.resolution)
+        #self.map_width = int((self.map_boundary[1][1] - self.map_boundary[1][0]) / self.resolution)
+        self.map_height = int(abs(self.map_boundary[0][1] - self.map_boundary[0][0]) / self.resolution)
+        self.map_width = int(abs(self.map_boundary[1][1] - self.map_boundary[1][0]) / self.resolution)
         self.map_depth = len(self.label_names)
 
         self.position_rel = np.array([[0, 0, 0]]).T
@@ -138,9 +134,14 @@ class SemanticMapping:
         # This is a testing parameter, when the time stamp reach this number, the entire node will terminate.
         self.test_cut_time = cfg.TEST_END_TIME
 
+        # load confusion matrix, we may take log probability instead
         if cfg.MAPPING.CONFUSION_MTX.LOAD_PATH != "":
             confusion_matrix = ConfusionMatrix(load_path=cfg.MAPPING.CONFUSION_MTX.LOAD_PATH)
-            self.confusion_matrix = confusion_matrix.get_submatrix(cfg.LABELS, to_probability=True, use_log=True)
+            confusion_matrix.merge_labels(cfg.SRC_INDICES, cfg.DST_INDICES)
+            self.confusion_matrix = confusion_matrix.get_submatrix(cfg.LABELS, to_probability=True, use_log=False)
+            self.confusion_matrix = adjust_for_mapping(self.confusion_matrix, factor=cfg.MAPPING.REWEIGHT_FACTOR)
+            self.confusion_matrix = np.log(self.confusion_matrix)
+            print('confusion_matrix:', self.confusion_matrix)
         else:
             # Use Identity confusion matrix
             self.confusion_matrix = np.eye(len(self.label_names))
@@ -153,12 +154,12 @@ class SemanticMapping:
         self.unique_input_dict = {}
         self.input_dir = cfg.MAPPING.INPUT_DIR
 
-    def _load_constant_matrics(self):
-        """ Load the constant matrices into class attributes """
-        self.T_velodyne_to_basklink = self._set_velodyne_to_baselink()
-        self.T_camera_to_base = {}
-        for cam in self._target_cameras:
-            self.T_camera_to_base = np.matmul(self.T_velodyne_to_basklink, self.camera_models[cam].T)
+
+    def preprocessing(self):
+        """ Setup constant matrices """
+        self.T_velodyne_to_basklink = self.set_velodyne_to_baselink()
+        self.T_cam1_to_base = np.matmul(self.T_velodyne_to_basklink, self.cam1.T)
+        self.T_cam6_to_base = np.matmul(self.T_velodyne_to_basklink, self.cam6.T)
 
         self.discretize_matrix_inv = np.array([
             [self.resolution, 0, self.map_boundary[0][0]],
@@ -167,108 +168,40 @@ class SemanticMapping:
         ]).astype(np.float)
         self.discretize_matrix = np.linalg.inv(self.discretize_matrix_inv)
 
-        # self.anchor_points = np.array([
-        #     [self.map_width, self.map_width / 3, self.map_width, self.map_width / 3],
-        #     [self.map_height / 4, self.map_height / 4, self.map_height * 3 / 4, self.map_height * 3 / 4],
-        # ])
-        #
-        # self.anchor_points_2 = np.array([
-        #     [self.map_width, self.map_width / 2, self.map_width / 2, self.map_width],
-        #     [self.map_height / 4, self.map_height / 4, self.map_height * 3 / 4, self.map_height * 3 / 4],
-        # ])
+        self.anchor_points = np.array([
+            [self.map_width, self.map_width / 3, self.map_width, self.map_width / 3],
+            [self.map_height / 4, self.map_height / 4, self.map_height * 3 / 4, self.map_height * 3 / 4],
+        ])
 
-    def _set_velodyne_to_baselink(self):
+        self.anchor_points_2 = np.array([
+            [self.map_width, self.map_width / 2, self.map_width / 2, self.map_width],
+            [self.map_height / 4, self.map_height / 4, self.map_height * 3 / 4, self.map_height * 3 / 4],
+        ])
+
+
+    def set_velodyne_to_baselink(self):
         rospy.logwarn("velodyne to baselink from TF is tunned, current version fits best.")
         T = euler_matrix(0., 0.140, 0.)
+        # T = euler_matrix(0., 0.10, 0.)
         t = np.array([[2.64, 0, 1.98]]).T
         T[0:3, -1::] = t
         return T
 
-    def _pcd_callback(self, msg):
-        """
-        The callback function for point cloud
 
-        Args:
-            msg (PointCloud2): refer to this http://docs.ros.org/melodic/api/sensor_msgs/html/msg/PointCloud2.html
-
-        """
-        # if False:
-        #     self.logger.warning("pcd data frame_id %s", msg.header.frame_id)
-        #     self.logger.debug("pcd data received")
-        #     self.logger.debug("pcd size: %d, %d", msg.height, msg.width)
-        #     self.logger.warning("pcd queue size: %d", len(self.pcd_queue))
+    def pcd_callback(self, msg):
+        """ Callback function for the point cloud dataset """
+        rospy.logdebug("pcd data frame_id %s", msg.header.frame_id)
+        rospy.logdebug("pcd data received")
+        rospy.logdebug("pcd size: %d, %d", msg.height, msg.width)
+        if len(self.pcd_queue) > 10:
+            rospy.logwarn("pcd queue size: %d", len(self.pcd_queue))
         pcd = np.empty((4, msg.width))
-        for i, el in enumerate(point_cloud2.read_points(msg, field_names=("x", "y", "z", "intensity"), skip_nans=True)):
+        for i, el in enumerate(pc2.read_points(msg, field_names=("x", "y", "z", "intensity"), skip_nans=True)):
             pcd[:, i] = el
-        self.pcd_queue.append((msg.header, pcd))
+        self.pcd_queue.append(pcd)
+        self.pcd_header_queue.append(msg.header)
         self.pcd_frame_id = msg.header.frame_id
 
-    def _pose_callback(self, msg):
-        """
-
-        Args:
-            msg (PoseStamped): http://docs.ros.org/melodic/api/geometry_msgs/html/msg/PoseStamped.html
-
-        Returns:
-
-        """
-        self.pose_queue.append(msg)
-        if msg.header.stamp.secs >= self.test_cut_time:
-            self.save_map_to_file = True
-        rospy.logdebug("Pose queue length: %d", len(self.pose_queue))
-
-    def _find_closest_data(self, queue, target_stamp):
-        """
-        Find the closest data B in queue w.r.t the target_stamp. Note that all the data that happens earlier than B,
-        including B itself will be removed from the queue. By doing so we can avoid re-association of previous data.
-        We assume that the time in queue is monotonically increase.
-
-        We first want to find the smallest stamp that is larger than the timestamp, then compare it with the
-        largest stamp that is smaller than the timestamp. and then pick the smallest one as the result. If such
-        condition does not exist, i.e. all the stamps are smaller than the time stamp, we just pick the latest one.
-
-        Args:
-            queue (deque): Each element in queue should be a tuple of (header, data) where we don't care the data
-                format. The header should have a header.stamp which contains its corresponding time stamp.
-            target_stamp (float): The target time stamp
-
-        Returns:
-            if the queue is empty, we return None.
-
-        """
-        if len(queue) == 0:
-            return None
-
-        # Identify the closest time stamp that is smaller than target_stamp
-        prev_elem = None
-        selected_elem = None
-        while len(queue) > 0:
-            curr_elem = queue.popleft()
-            curr_stamp = curr_elem[0].stamp
-            if curr_stamp > target_stamp:
-                if prev_elem is None:
-                    selected_elem = curr_elem
-                    break
-                else:
-                    prev_stamp = prev_elem[0].stamp
-                    diff_1 = np.abs(curr_stamp - target_stamp)
-                    diff_2 = np.abs(prev_stamp - target_stamp)
-                    if diff_1 < diff_2:
-                        # Pick current element
-                        selected_elem = curr_elem
-                    else:
-                        # Pick previous elem and put current element back
-                        selected_elem = prev_elem
-                        queue.appendleft(curr_elem)
-                    break
-
-            prev_elem = curr_elem
-
-        # If no element that are greater than target stamp, return the lastest one
-        if selected_elem is None:
-            return prev_elem
-        else:
-            return selected_elem
 
     def update_pcd(self, target_stamp):
         """
@@ -306,22 +239,27 @@ class SemanticMapping:
         rospy.logdebug("Setting current pcd at: %d.%09ds", header.stamp.secs, header.stamp.nsecs)
         return pcd, header.stamp
 
+
     def pose_callback(self, msg):
         rospy.logdebug("Getting pose at: %d.%09ds", msg.header.stamp.secs, msg.header.stamp.nsecs)
         self.pose_queue.append(msg)
-        if msg.header.stamp.secs >= self.test_cut_time:
-            self.save_map_to_file = True
         rospy.logdebug("Pose queue length: %d", len(self.pose_queue))
+
 
     def set_global_map_pose(self):
         """ global map origin is shifted to the min x, y point in the point map
         so that the entire map will have positive values """
         pose = Pose()
-        pose.position.x = -1369.0496826171875  # min x
-        pose.position.y = -562.84814453125  # min y
+        #pose.position.x = 1369.0496826171875  # min x
+        #pose.position.y = 562.84814453125  # min y
+        pose.position.x = abs(self.map_boundary[0][0])  # min x
+        pose.position.y = abs(self.map_boundary[1][0])  # min y
+        #pose.position.x = 118.229263306  # min x
+        #pose.position.y = 81.1667251587  # min y
         pose.position.z = 0.0
         pose.orientation.w = 1.0
         set_map_pose(pose, '/world', 'global_map')
+
 
     def update_pose(self, target_stamp):
         """
@@ -346,14 +284,19 @@ class SemanticMapping:
         rospy.logdebug("Setting current pose at: %d.%09ds", msg.header.stamp.secs, msg.header.stamp.nsecs)
         return msg.pose, msg.header.stamp
 
+
     def image_callback(self, msg):
         """
         The callback function for the camera image. When the semantic camera image is published, this function will be
         invoked and generate a BEV semantic map from the image.
         """
-        self.logger.log("Mapping image at: {}.{:.9f}s".format(msg.header.stamp.secs, msg.header.stamp.nsecs))
+        if msg.header.stamp.secs >= self.test_cut_time:
+            self.save_map_to_file = True
+        else:
+            rospy.loginfo('{} seconds to end time.'.format(int(self.test_cut_time - msg.header.stamp.secs)))
+        self.logger.log("Mapping {} image at: {}s".format(msg.header.frame_id, msg.header.stamp.to_sec()))
         try:
-            image_in = self._bridge.imgmsg_to_cv2(msg, desired_encoding="passthrough")
+            image_in = self.bridge.imgmsg_to_cv2(msg, desired_encoding="passthrough")
         except CvBridgeError as e:
             print(e)
             return
@@ -377,6 +320,7 @@ class SemanticMapping:
 
         rospy.logdebug("Finished Mapping image at: %d.%09ds", msg.header.stamp.secs, msg.header.stamp.nsecs)
 
+
     def mapping(self, semantic_image, pose, camera_calibration):
         """
         Receives the semantic segmentation image, the pose of the vehicle, and the calibration of the camera,
@@ -394,37 +338,52 @@ class SemanticMapping:
             # self.unique_input_dict["camera_calibration"] = camera_calibration
 
         if self.depth_method in ['points_map', 'points_raw']:
-            frame_input_dict = {"pcd": np.array(self.pcd),
-                                "pcd_frame_id": self.pcd_frame_id,
-                                "semantic_image": np.array(semantic_image),
-                                "pose": pose}
-            self.input_list.append(frame_input_dict)
+            # frame_input_dict = {"pcd": np.array(self.pcd),
+            #                     "pcd_frame_id": self.pcd_frame_id,
+            #                     "semantic_image": np.array(semantic_image),
+            #                     "pose": pose}
+            # self.input_list.append(frame_input_dict)
             pcd_in_range, pcd_label = self.project_pcd(self.pcd, self.pcd_frame_id, semantic_image, pose,
                                                        camera_calibration)
+            pcd_label = self.merge_color(pcd_label)
             pcd_pub = create_point_cloud(pcd_in_range[0:3].T, pcd_label.T, frame_id=self.pcd_frame_id)
             self.pub_pcd.publish(pcd_pub)
-
             self.map = self.update_map(self.map, pcd_in_range, pcd_label)
         else:
             self.map = self.update_map_planar(self.map, semantic_image, camera_calibration)
-
+        
+        debug = False
+        if self.save_map_to_file or debug:
+            rospy.loginfo('Done update mapping')
+            map_filtered = apply_filter(self.map)  # smooth the labels to fill black holes
+            rospy.loginfo('Done filtering.')
+            color_map = render_bev_map(map_filtered, self.label_colors)
+            rospy.loginfo('Done redering map.')
+            # color_map = render_bev_map_with_thresholds(self.map, self.label_colors, priority=[3, 4, 0, 2, 1],
+            #                                            thresholds=[0.1, 0.1, 0.5, 0.20, 0.05])
+        
+            # Publish the image
+            try:
+                image_pub = self.bridge.cv2_to_imgmsg(color_map, encoding="passthrough")
+                self.pub_semantic_local_map.publish(image_pub)
+            except CvBridgeError as e:
+                print(e)
+        
         if self.save_map_to_file:
             # with open(os.path.join(self.input_dir, "input_list.hkl"), 'wb') as fp:
             #     print("writing input_list ...")
             #     hickle.dump(self.input_list, fp, mode='w')    
-
+                        
             output_dir = self.output_dir
             makedirs(output_dir, exist_ok=True)
             # np.save(osp.join(output_dir, "map.npy"), self.map)
 
-            self.map = apply_filter(self.map)  # smooth the labels to fill black holes
+            # raw map can be quite large, 1-2 GB
+            # np.save(osp.join(output_dir, "raw_map.npy"), self.map)
 
-            color_map = render_bev_map(self.map, self.label_colors)
-            # color_map = render_bev_map_with_thresholds(self.map, self.label_colors, priority=[3, 4, 0, 2, 1],
-            #                                            thresholds=[0.1, 0.1, 0.5, 0.20, 0.05])
-
-            output_file = osp.join(output_dir, "global_map.png")
-            print("Saving image to", output_file)
+            
+            output_file = osp.join(output_dir, "global_map_hrnet.png")
+            print("Saving image to: ", output_file)
             cv2.imwrite(output_file, color_map)
 
             # evaluate
@@ -432,15 +391,9 @@ class SemanticMapping:
                 test = Test(ground_truth_dir=self.ground_truth_dir, logger=self.logger)
                 test.test_single_map(color_map)
 
-            # Publish the image
-            try:
-                image_pub = self._bridge.cv2_to_imgmsg(color_map, encoding="passthrough")
-                self.pub_semantic_local_map.publish(image_pub)
-            except CvBridgeError as e:
-                print(e)
-
-            # TODO: This line of code is just for debugging purpose
+            # # TODO: This line of code is just for debugging purpose
             rospy.signal_shutdown('Done with the mapping')
+
 
     def project_pcd(self, pcd, pcd_frame_id, image, pose, camera_calibration):
         """
@@ -451,6 +404,7 @@ class SemanticMapping:
         Returns: Point cloud that are visible in the image, and their associated labels
 
         """
+        rospy.logdebug('projected pcd.')
         if pcd is None: return
         if pcd_frame_id != "velodyne":
             T_base_to_origin = get_transform_from_pose(pose)
@@ -475,6 +429,15 @@ class SemanticMapping:
         label = image[image_idx[1, :], image_idx[0, :]].T
 
         return masked_pcd, label
+    
+
+    def merge_color(self, pcd_label):
+        # print(pcd_label.shape)
+        for color_src, color_dest in zip(self.color_remap_source, self.color_remap_dest):
+            pcd_mask = np.all(pcd_label == color_src.reshape(3,1), axis=0)
+            pcd_label[:,pcd_mask] = color_dest.reshape(3,1)
+        return pcd_label
+
 
     def update_map(self, map, pcd, label):
         """
@@ -489,13 +452,14 @@ class SemanticMapping:
             Updated map
         """
         normal = np.array([[0.0, 0.0, 1.0]]).T  # The normal of the z axis
-        pcd_origin_offset = np.array(
-            [[1369.0496826171875], [562.84814453125], [0.0]])  # pcd origin with respect to map origin
+        #pcd_origin_offset = np.array([[1369.0496826171875], [562.84814453125], [0.0]]) # pcd origin with respect to map origin
+        pcd_origin_offset = np.array([[abs(self.map_boundary[0][0])], [abs(self.map_boundary[1][0])], [0.0]]) # pcd origin with respect to map origin
         pcd_local = pcd[0:3] + pcd_origin_offset
         pcd_on_map = pcd_local - np.matmul(normal, np.matmul(normal.T, pcd_local))
         # Discretize point cloud into grid, Note that here we are basically doing the nearest neighbor search
-        pcd_pixel = ((pcd_on_map[0:2, :] - np.array([[self.map_boundary[0][0]], [self.map_boundary[1][0]]]))
-                     / self.resolution).astype(np.int32)
+        #pcd_pixel = ((pcd_on_map[0:2, :] - np.array([[self.map_boundary[0][0]], [self.map_boundary[1][0]]]))
+        #             / self.resolution).astype(np.int32)
+        pcd_pixel = (pcd_on_map[0:2, :] / self.resolution).astype(np.int32)
         on_grid_mask = np.logical_and(np.logical_and(0 <= pcd_pixel[0, :], pcd_pixel[0, :] < self.map_height),
                                       np.logical_and(0 <= pcd_pixel[1, :], pcd_pixel[1, :] < self.map_width))
 
@@ -507,7 +471,7 @@ class SemanticMapping:
             # Then we do a logical AND among the rows of a, represented by *a.
             idx = np.logical_and(*(label == self.label_colors[i].reshape(3, 1)))
             idx_mask = np.logical_and(idx, on_grid_mask)
-
+            
             # Update the local map with Bayes update rule
             # map[pcd_pixel[0, idx_mask], pcd_pixel[1, idx_mask], :] has shape (n, num_classes)
             map[pcd_pixel[0, idx_mask], pcd_pixel[1, idx_mask], :] += self.confusion_matrix[:, i].reshape(1, -1)
@@ -524,6 +488,7 @@ class SemanticMapping:
                 # 2 is an experimental number which we think is good enough to connect the lane on the side.
                 # Too large the lane will be widen, too small the lane will be fragmented.
                 map[pcd_pixel[0, intensity_mask], pcd_pixel[1, intensity_mask], i] += 2
+                # map[pcd_pixel[0, idx_mask], pcd_pixel[1, idx_mask], i] += 100
 
                 # For the region where there is no intensity by our network detected as lane, we will degrade its
                 # threshold
@@ -531,6 +496,7 @@ class SemanticMapping:
                 # map[pcd_pixel[1, non_intensity_mask], pcd_pixel[0, non_intensity_mask], i] -= 0.5
 
         return map
+
 
     def update_map_planar(self, map_local, image, cam):
         """ Project the semantic image onto the map plane and update it """
@@ -543,17 +509,16 @@ class SemanticMapping:
         T_local_to_base, _, _, _ = get_transformation(frame_from='/global_map', time_from=rospy.Time(0),
                                                       frame_to='/base_link', time_to=self.pose_time,
                                                       static_frame='world',
-                                                      tf_listener=self._tf_listener, tf_ros=self._tf_ros)
+                                                      tf_listener=self.tf_listener, tf_ros=self.tf_ros)
         T_base_to_velodyne = np.linalg.inv(self.T_velodyne_to_basklink)
         T_local_to_velodyne = np.matmul(T_base_to_velodyne, T_local_to_base)
 
         points_base_link = np.array([[30, 10, 10, 30],
-                                     [0, 2, 5, 15],
-                                     [0, 0, 0, 0]], dtype=np.float)
+                                    [0, 2, 5, 15],
+                                    [0, 0, 0, 0]], dtype=np.float)
         points_global = np.matmul(np.linalg.inv(T_local_to_base), homogenize(points_base_link))
-        anchor_points_global = (
-                (points_global[0:2, :] - np.array([[self.map_boundary[0][0]], [self.map_boundary[1][0]]]))
-                / self.resolution).astype(np.int32)
+        anchor_points_global = ((points_global[0:2, :] - np.array([[self.map_boundary[0][0]], [self.map_boundary[1][0]]]))
+                     / self.resolution).astype(np.int32)
 
         # compute new points
         points_velodyne = np.matmul(T_local_to_velodyne, points_global)
@@ -583,6 +548,7 @@ class SemanticMapping:
         # normalized_map = self.normalize_map(map_local)
 
         return map_local
+
 
     def add_car_to_map(self, color_map):
         """
@@ -621,6 +587,7 @@ class SemanticMapping:
         # setting color
         color_map[Ixy_map[1, :], Ixy_map[0, :], :] = [255, 0, 0]
         return color_map
+
 
     def get_extrinsics(self, pose, camera_id):
         T_base_to_origin = get_transform_from_pose(pose)
@@ -669,15 +636,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-    # class QueueData:
-    #     """ A generic data format for ROS data """
-    #
-    #     def __init__(self, header, **kwargs):
-    #         self.header = header
-    #         self._data = {**kwargs}
-    #
-    #     def __getitem__(self, key):
-    #         if key not in self._data:
-    #             raise KeyError
-    #         return self._data[key]
