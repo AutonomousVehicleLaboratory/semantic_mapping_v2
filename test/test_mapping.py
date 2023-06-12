@@ -1,6 +1,6 @@
 import unittest
 
-from src.mapping import *
+from src.semantic_mapping_node import *
 
 
 class FindClosestDataTestCase(unittest.TestCase):
