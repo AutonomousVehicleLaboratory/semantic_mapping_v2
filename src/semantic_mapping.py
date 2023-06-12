@@ -42,6 +42,7 @@ class SemanticMapping:
         # Set up the logger
         self.logger = logger
 
+        self.depth_method = cfg.MAPPING.DEPTH_METHOD
         self.pcd_range_max = cfg.MAPPING.PCD.RANGE_MAX
         self.use_pcd_intensity = cfg.MAPPING.PCD.USE_INTENSITY
 
