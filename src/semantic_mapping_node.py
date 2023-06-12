@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-""" Semantic mapping
+""" Semantic mapping ROS Wrapper Node
 
 Author: Henry Zhang
-Date:February 24, 2020
+Date: February 24, 2020
 
 """
 import argparse
@@ -35,6 +35,7 @@ from src.utils.logger import MyLogger
 from src.utils.file_io import makedirs
 from test.test_semantic_mapping import Test
 from src.semantic_mapping import SemanticMapping
+
 
 class SemanticMappingNode:
     """
@@ -134,7 +135,8 @@ class SemanticMappingNode:
 
 
     def pcd_callback(self, msg):
-        """ Callback function for the point cloud dataset """
+        """ Callback function for the point cloud data.
+        Store data to queue for synchronization. """
         rospy.logdebug("pcd data frame_id %s", msg.header.frame_id)
         rospy.logdebug("pcd data received")
         rospy.logdebug("pcd size: %d, %d", msg.height, msg.width)
@@ -186,13 +188,17 @@ class SemanticMappingNode:
 
 
     def pose_callback(self, msg):
+        """ Callback function for the pose data.
+        Store data to queue for synchronization. """
         rospy.logdebug("Getting pose at: %d.%09ds", msg.header.stamp.secs, msg.header.stamp.nsecs)
         self.pose_queue.append(msg)
         rospy.logdebug("Pose queue length: %d", len(self.pose_queue))
 
 
     def set_global_map_pose(self):
-        """ global map origin is shifted to the min x, y point in the point map
+        """ Send /global_map pose to TF
+
+        Global map origin is shifted to the min x, y point in the point map
         so that the entire map will have positive values """
         pose = Pose()
         pose.position.x = abs(self.mapper.map_boundary[0][0])  # min x

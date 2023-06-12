@@ -1,8 +1,7 @@
-#!/usr/bin/env python3
-""" Semantic mapping
+""" Semantic mapping library
 
 Author: Henry Zhang
-Date:February 24, 2020
+Date: February 24, 2020
 
 """
 import argparse
