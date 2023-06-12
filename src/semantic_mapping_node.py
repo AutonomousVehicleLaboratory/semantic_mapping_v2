@@ -328,14 +328,14 @@ def parse_args():
 
 
 def main():
-    rospy.init_node('semantic_mapping')
+    rospy.init_node('semantic_mapping_node')
 
     cfg = get_cfg_defaults()
     args = parse_args()
     if args.config_file:
         cfg.merge_from_file(args.config_file)
 
-    sm = SemanticMapping(cfg)
+    sm = SemanticMappingNode(cfg)
     rospy.spin()
 
 
